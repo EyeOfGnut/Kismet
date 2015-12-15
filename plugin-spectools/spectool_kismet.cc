@@ -37,7 +37,6 @@
 #include <plugintracker.h>
 #include <globalregistry.h>
 #include <netracker.h>
-#include <packetdissectors.h>
 #include <dumpfile_pcap.h>
 #include <kis_ppi.h>
 #include <endian_magic.h>
@@ -103,6 +102,12 @@ int kisspec_dump(DUMPFILE_PPI_PARMS) {
 
 int kisspec_register(GlobalRegistry *in_globalreg) {
 	globalreg = in_globalreg;
+
+	if (globalreg->kismet_instance != KISMET_INSTANCE_SERVER) {
+		_MSG("Not activating SPECTOOLS plugin, not running on a server",
+			 MSGFLAG_INFO);
+		return 1;
+	}
 
 	if (globalreg->pcapdump == NULL || globalreg->packetchain == NULL ||
 		globalreg->kismet_config == NULL || globalreg->kisnetserver == NULL) 

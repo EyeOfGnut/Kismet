@@ -152,7 +152,7 @@ void *linuxbt_cap_thread(void *arg) {
 			}
 
 			rpkt->bd_name = string(hci_name);
-			rpkt->bd_addr = mac_addr(swapmac);
+			rpkt->bd_addr = mac_addr(swapmac, 6);
 			snprintf(classbuf, 6, "%2.2x%2.2x%2.2x",
 					 (hci_inq + x)->dev_class[2],
 					 (hci_inq + x)->dev_class[1],
@@ -296,6 +296,10 @@ int PacketSource_LinuxBT::Poll() {
 		// printf("debug - got BT device %s %s %s\n", pi->bd_addr.Mac2String().c_str(), pi->bd_name.c_str(), pi->bd_class.c_str());
 
 		num_packets++;
+
+		kis_ref_capsource *csrc_ref = new kis_ref_capsource;
+		csrc_ref->ref_source = this;
+		newpack->insert(_PCM(PACK_COMP_KISCAPSRC), csrc_ref);
 
 		globalreg->packetchain->ProcessPacket(newpack);
 

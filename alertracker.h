@@ -68,6 +68,7 @@ public:
 
 
 	string header;
+	int phy;
 	struct timeval tm;
 	mac_addr bssid;
 	mac_addr source;
@@ -90,7 +91,7 @@ public:
 
 enum ALERT_fields {
     ALERT_sec, ALERT_usec, ALERT_header, ALERT_bssid, ALERT_source,
-    ALERT_dest, ALERT_other, ALERT_channel, ALERT_text,
+    ALERT_dest, ALERT_other, ALERT_channel, ALERT_text, ALERT_phytype,
 	ALERT_maxfield
 };
 
@@ -111,6 +112,8 @@ public:
     struct alert_rec {
         int ref_index;
         string header;
+
+		int phy;
 
         // Units limiting is measured in
         alert_time_unit limit_unit;
@@ -147,7 +150,7 @@ public:
 
     // Register an alert and get an alert reference number back.
     int RegisterAlert(const char *in_header, alert_time_unit in_unit, int in_rate,
-                      alert_time_unit in_burstunit, int in_burst);
+                      alert_time_unit in_burstunit, int in_burst, int in_phy);
 
     // Find a reference from a name
     int FetchAlertRef(string in_header);
@@ -175,6 +178,7 @@ public:
 
 	// Activate a preconfigured alert from a file
 	int ActivateConfiguredAlert(const char *in_header);
+	int ActivateConfiguredAlert(const char *in_header, int in_phy);
 
 	const vector<kis_alert_info *> *FetchBacklog();
 

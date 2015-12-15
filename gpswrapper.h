@@ -34,7 +34,21 @@ public:
 
 	static void Usage(char *argv);
 
+<<<<<<< HEAD
 	GpsWrapper(GlobalRegistry *globalreg);
+=======
+	GpsWrapper(GlobalRegistry *in_globalreg);
+
+	~GpsWrapper() {
+		globalreg->InsertGlobal("GPSWRAPPER", NULL);
+	}
+
+	string FetchType() { return gps->FetchType(); }
+	string FetchDevice() { return gps->FetchDevice(); }
+
+protected:
+	GlobalRegistry *globalreg;
+>>>>>>> upstream/master
 
 	GPSCore *gps;
 };
@@ -52,6 +66,10 @@ public:
 		// We don't parse our options
 		RegisterComponents();
 	}
+
+	string FetchType() { return "none"; }
+
+	string FetchDevice() { return "none"; }
 
 	virtual int MergeSet(int in_max_fd, fd_set *out_rset, fd_set *out_wset) {
 		return in_max_fd;

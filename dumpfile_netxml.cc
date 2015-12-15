@@ -38,10 +38,14 @@ Dumpfile_Netxml::Dumpfile_Netxml(GlobalRegistry *in_globalreg) :
 	xmlfile = NULL;
 
 	type = "netxml";
+	logclass = "xml";
 
 	if (globalreg->netracker == NULL) {
-		fprintf(stderr, "FATAL OOPS:  Netracker missing before Dumpfile_Netxml\n");
-		exit(1);
+		// fprintf(stderr, "FATAL OOPS:  Netracker missing before Dumpfile_Netxml\n");
+		// exit(1);
+		_MSG("Deprecated nettracker core disabled, disabling netxml logfile.", 
+			 MSGFLAG_INFO);
+		return;
 	}
 
 	if (globalreg->kismet_config == NULL) {
@@ -50,7 +54,7 @@ Dumpfile_Netxml::Dumpfile_Netxml(GlobalRegistry *in_globalreg) :
 	}
 
 	// Find the file name
-	if ((fname = ProcessConfigOpt("netxml")) == "" || 
+	if ((fname = ProcessConfigOpt()) == "" ||
 		globalreg->fatal_condition) {
 		return;
 	}

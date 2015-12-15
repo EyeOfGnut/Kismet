@@ -27,6 +27,12 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 
+#include "kis_dlt.h"
+#include "kis_dlt_ppi.h"
+#include "kis_dlt_prism2.h"
+#include "kis_dlt_radiotap.h"
+
+#include "phy_80211.h"
 #include "gpscore.h"
 
 #ifdef HAVE_LINUX_WIRELESS
@@ -116,6 +122,7 @@ int PacketSource_Pcap::OpenSource() {
 	errstr[0] = '\0';
 	num_packets = 0;
 
+#if 0
 	// Anything but windows and linux
     #if defined (SYS_OPENBSD) || defined(SYS_NETBSD) || defined(SYS_FREEBSD) \
 		|| defined(SYS_DARWIN)
@@ -137,6 +144,7 @@ int PacketSource_Pcap::OpenSource() {
 		pcap_close(pd);
 		return -1;
 	}
+#endif
 
 #ifdef HAVE_PCAP_NONBLOCK
     pcap_setnonblock(pd, 1, errstr);
@@ -284,10 +292,16 @@ int PacketSource_Pcap::Poll() {
 	kis_datachunk *linkchunk = new kis_datachunk;
 	linkchunk->dlt = datalink_type;
 	linkchunk->source_id = source_id;
+
+	linkchunk->set_data(callback_data, kismin(callback_header.caplen, 
+											  (uint32_t) MAX_PACKET_LEN), true);
+#if 0
 	linkchunk->data = 
 		new uint8_t[kismin(callback_header.caplen, (uint32_t) MAX_PACKET_LEN)];
 	linkchunk->length = kismin(callback_header.caplen, (uint32_t) MAX_PACKET_LEN);
 	memcpy(linkchunk->data, callback_data, linkchunk->length);
+#endif
+
 	newpack->insert(_PCM(PACK_COMP_LINKFRAME), linkchunk);
 
 	// Only decode the DLT if we're asked to
@@ -313,14 +327,7 @@ int PacketSource_Pcap::Poll() {
 int PacketSource_Pcap::ManglePacket(kis_packet *packet, kis_datachunk *linkchunk) {
 	int ret = 0;
 
-	if (linkchunk->dlt == DLT_PRISM_HEADER || 
-		linkchunk->dlt == DLT_IEEE802_11_RADIO_AVS) {
-		ret = Prism2KisPack(packet, linkchunk);
-	} else if (linkchunk->dlt == DLT_IEEE802_11_RADIO) {
-		ret = Radiotap2KisPack(packet, linkchunk);
-	} else if (linkchunk->dlt == DLT_PPI) {
-		ret = PPI2KisPack(packet, linkchunk);
-	} else if (linkchunk->dlt == DLT_IEEE802_11) {
+	if (linkchunk->dlt == DLT_IEEE802_11) {
 		ret = Eight2KisPack(packet, linkchunk);
 	}
 
@@ -343,186 +350,27 @@ int PacketSource_Pcap::Eight2KisPack(kis_packet *packet, kis_datachunk *linkchun
 	kis_datachunk *eight11chunk = NULL;
 
 	eight11chunk = new kis_datachunk;
-
 	eight11chunk->dlt = KDLT_IEEE802_11;
+	eight11chunk->set_data(linkchunk->data, kismin(linkchunk->length - fcsbytes,
+												   (uint32_t) MAX_PACKET_LEN), false);
 
+#if 0
 	eight11chunk->length = kismin((linkchunk->length - fcsbytes), 
 								  (uint32_t) MAX_PACKET_LEN);
 
 	eight11chunk->data = new uint8_t[eight11chunk->length];
     memcpy(eight11chunk->data, linkchunk->data, eight11chunk->length);
-
-	kis_fcs_bytes *fcschunk = NULL;
-	if (fcsbytes && linkchunk->length > 4) {
-		fcschunk = new kis_fcs_bytes;
-		memcpy(fcschunk->fcs, &(linkchunk->data[linkchunk->length - 4]), 4);
-		// Valid until proven otherwise
-		fcschunk->fcsvalid = 1;
-
-		packet->insert(_PCM(PACK_COMP_FCSBYTES), fcschunk);
-	}
-
-	// If we're validating the FCS
-	if (validate_fcs && fcschunk != NULL) {
-		// Compare it and flag the packet
-		uint32_t calc_crc =
-			crc32_le_80211(globalreg->crc32_table, eight11chunk->data, 
-						   eight11chunk->length);
-
-		if (memcmp(fcschunk->fcsp, &calc_crc, 4)) {
-			packet->error = 1;
-			fcschunk->fcsvalid = 0;
-			//fprintf(stderr, "debug - dot11 to kis, fcs invalid\n");
-		} else {
-			fcschunk->fcsvalid = 1;
-		}
-	}
-
-	packet->insert(_PCM(PACK_COMP_80211FRAME), eight11chunk);
-
-	return 1;
-}
-
-int PacketSource_Pcap::Prism2KisPack(kis_packet *packet, kis_datachunk *linkchunk) {
-    int callback_offset = 0;
-    char errstr[STATUS_MAX] = "";
-
-	// Make a datachunk for the reformatted frame
-	kis_datachunk *eight11chunk = NULL;
-	kis_layer1_packinfo *radioheader = NULL;
-
-    // See if we have an AVS wlan header...
-    avs_80211_1_header *v1hdr = (avs_80211_1_header *) linkchunk->data;
-    if (linkchunk->length >= sizeof(avs_80211_1_header) &&
-        ntohl(v1hdr->version) == 0x80211001) {
-
-        if (ntohl(v1hdr->length) > linkchunk->length ||
-			linkchunk->length < (ntohl(v1hdr->length) + fcsbytes)) {
-            snprintf(errstr, STATUS_MAX, "pcap prism2 converter got corrupted "
-					 "AVS header length");
-            globalreg->messagebus->InjectMessage(errstr, MSGFLAG_ERROR);
-            return 0;
-        }
-
-		eight11chunk = new kis_datachunk;
-		radioheader = new kis_layer1_packinfo;
-
-		eight11chunk->dlt = KDLT_IEEE802_11;
-
-        // Subtract the packet FCS since kismet doesn't do anything terribly bright
-        // with it right now, also subtract the avs header.  We have to obey the
-		// header length here since avs could change
-		eight11chunk->length = kismin((linkchunk->length - ntohl(v1hdr->length) -
-									  fcsbytes), (uint32_t) MAX_PACKET_LEN);
-        callback_offset = ntohl(v1hdr->length);
-
-        // We REALLY need to do something smarter about this and handle the RSSI
-        // type instead of just copying
-		radioheader->signal_rssi = ntohl(v1hdr->ssi_signal);
-		radioheader->noise_rssi = ntohl(v1hdr->ssi_noise);
-
-		radioheader->freq_mhz = ChanToFreq(ntohl(v1hdr->channel));
-
-        switch (ntohl(v1hdr->phytype)) {
-            case 1:
-				radioheader->carrier = carrier_80211fhss;
-				break;
-            case 2:
-                radioheader->carrier = carrier_80211dsss;
-                break;
-            case 4:
-            case 5:
-                radioheader->carrier = carrier_80211b;
-                break;
-            case 6:
-            case 7:
-                radioheader->carrier = carrier_80211g;
-                break;
-            case 8:
-                radioheader->carrier = carrier_80211a;
-                break;
-            default:
-                radioheader->carrier = carrier_unknown;
-                break;
-        }
-
-        radioheader->encoding = (phy_encoding_type) ntohl(v1hdr->encoding);
-
-        radioheader->datarate = (int) ntohl(v1hdr->datarate);
-    }
-
-    // See if we have a prism2 header
-    wlan_ng_prism2_header *p2head = (wlan_ng_prism2_header *) linkchunk->data;
-	if (linkchunk->length >= (sizeof(wlan_ng_prism2_header) + fcsbytes) &&
-        radioheader == NULL) {
-
-		eight11chunk = new kis_datachunk;
-		radioheader = new kis_layer1_packinfo;
-
-		eight11chunk->dlt = KDLT_IEEE802_11;
-
-#if 0
-        // Subtract the packet FCS since kismet doesn't do anything terribly bright
-        // with it right now
-		if (p2head->frmlen.data < fcsbytes) {
-			snprintf(errstr, STATUS_MAX, "pcap prism2 converter got corrupted "
-					 "wlanng-header frame length");
-			globalreg->messagebus->InjectMessage(errstr, MSGFLAG_ERROR);
-			return 0;
-		}
-#endif
-		
-		// We don't pay attention to the length provided by prism2hdr, since
-		// some drivers get it wrong
-		eight11chunk->length = kismin((linkchunk->length - 
-									   sizeof(wlan_ng_prism2_header) - fcsbytes),
-									  (uint32_t) MAX_PACKET_LEN);
-
-#if 0
-        eight11chunk->length = kismin((p2head->frmlen.data - fcsbytes), 
-									   (uint32_t) MAX_PACKET_LEN);
 #endif
 
-        // Set our offset for extracting the actual data
-        callback_offset = sizeof(wlan_ng_prism2_header);
-
-        radioheader->signal_rssi = p2head->signal.data;
-        radioheader->noise_rssi = p2head->noise.data;
-
-        radioheader->freq_mhz = ChanToFreq(p2head->channel.data);
-    }
-
-    if (radioheader == NULL) {
-        snprintf(errstr, STATUS_MAX, "pcap prism2 converter saw strange "
-				 "capture frame (PRISM80211 linktype, unable to determine "
-				 "prism headers)");
-        globalreg->messagebus->InjectMessage(errstr, MSGFLAG_ERROR);
-        return 0;
-    }
-
-	eight11chunk->data = new uint8_t[eight11chunk->length];
-    memcpy(eight11chunk->data, linkchunk->data + callback_offset, eight11chunk->length);
-
-	packet->insert(_PCM(PACK_COMP_RADIODATA), radioheader);
-	packet->insert(_PCM(PACK_COMP_80211FRAME), eight11chunk);
-
-	kis_fcs_bytes *fcschunk = NULL;
+	kis_packet_checksum *fcschunk = NULL;
 	if (fcsbytes && linkchunk->length > 4) {
-		fcschunk = new kis_fcs_bytes;
-		memcpy(fcschunk->fcs, &(linkchunk->data[linkchunk->length - 4]), 4);
-		// Valid until proven otherwise
-		fcschunk->fcsvalid = 1;
+		fcschunk = new kis_packet_checksum;
 
-		packet->insert(_PCM(PACK_COMP_FCSBYTES), fcschunk);
-	}
+		// memcpy(fcschunk->fcs, &(linkchunk->data[linkchunk->length - 4]), 4);
 
-	// If we're validating the FCS
-	if (validate_fcs && fcschunk != NULL) {
-		// Compare it and flag the packet
-		uint32_t calc_crc =
-			crc32_le_80211(globalreg->crc32_table, eight11chunk->data, 
-						   eight11chunk->length);
+		fcschunk->set_data(&(linkchunk->data[linkchunk->length - 4]), 4);
 
+<<<<<<< HEAD
 		if (memcmp(fcschunk->fcsp, &calc_crc, 4)) {
 			packet->error = 1;
 			fcschunk->fcsvalid = 0;
@@ -832,11 +680,14 @@ int PacketSource_Pcap::Radiotap2KisPack(kis_packet *packet, kis_datachunk *linkc
 	if (fcs_cut && linkchunk->length > 4) {
 		fcschunk = new kis_fcs_bytes;
 		memcpy(fcschunk->fcs, &(linkchunk->data[linkchunk->length - 4]), 4);
+=======
+>>>>>>> upstream/master
 		// Valid until proven otherwise
-		fcschunk->fcsvalid = 1;
+		fcschunk->checksum_valid = 1;
 
-		packet->insert(_PCM(PACK_COMP_FCSBYTES), fcschunk);
+		packet->insert(_PCM(PACK_COMP_CHECKSUM), fcschunk);
 	}
+
 
 	// If we're validating the FCS
 	if (validate_fcs && fcschunk != NULL) {
@@ -845,258 +696,18 @@ int PacketSource_Pcap::Radiotap2KisPack(kis_packet *packet, kis_datachunk *linkc
 			crc32_le_80211(globalreg->crc32_table, eight11chunk->data, 
 						   eight11chunk->length);
 
-		if (memcmp(fcschunk->fcsp, &calc_crc, 4)) {
+		if (memcmp(fcschunk->checksum_ptr, &calc_crc, 4)) {
 			packet->error = 1;
-			fcschunk->fcsvalid = 0;
-			// fprintf(stderr, "debug - rtap to kis, fcs invalid\n");
+			fcschunk->checksum_valid = 0;
+			//fprintf(stderr, "debug - dot11 to kis, fcs invalid\n");
 		} else {
-			fcschunk->fcsvalid = 1;
-		}
-
-	}
-
-    return 1;
-}
-#undef BITNO_32
-#undef BITNO_16
-#undef BITNO_8
-#undef BITNO_4
-#undef BITNO_2
-#undef BIT
-
-int PacketSource_Pcap::PPI2KisPack(kis_packet *packet, kis_datachunk *linkchunk) {
-	ppi_packet_header *ppi_ph;
-	ppi_field_header *ppi_fh;
-	unsigned int ppi_fh_offt = sizeof(ppi_packet_header);
-	unsigned int tuint, ph_len;
-	int applyfcs = 0, fcsknownbad = 0;
-
-	// Make a datachunk for the reformatted frame
-	kis_datachunk *eight11chunk = NULL;
-	kis_layer1_packinfo *radioheader = NULL;
-	kis_gps_packinfo *gpsinfo = NULL;
-
-	if (linkchunk->length < sizeof(ppi_packet_header)) {
-		_MSG("pcap PPI converter got runt PPI frame", MSGFLAG_ERROR);
-		return 0;
-	}
-
-	ppi_ph = (ppi_packet_header *) linkchunk->data;
-	ph_len = kis_letoh16(ppi_ph->pph_len);
-	if (ph_len > linkchunk->length) {
-		_MSG("pcap PPI converter got invalid/runt PPI frame header", MSGFLAG_ERROR);
-		return 0;
-	}
-
-	// Fix broken kismet dumps where kismet logged the wrong size (always
-	// size 24) - if we're size 24, we have a PPI 11n common header, and
-	// we can fit it all, then we adjust the header size up
-	if (ph_len == 24 && linkchunk->length > 32) {
-		ppi_fh = (ppi_field_header *) &(linkchunk->data[ppi_fh_offt]);
-		if (kis_letoh16(ppi_fh->pfh_datatype) == PPI_FIELD_11COMMON) 
-			ph_len = 32;
-	}
-
-	// Ignore the DLT and treat it all as 802.11... for now
-	while (ppi_fh_offt < linkchunk->length &&
-		   ppi_fh_offt < ph_len) {
-		ppi_fh = (ppi_field_header *) &(linkchunk->data[ppi_fh_offt]);
-		unsigned int fh_len = kis_letoh16(ppi_fh->pfh_datalen);
-		unsigned int fh_type = kis_letoh16(ppi_fh->pfh_datatype);
-
-		if (fh_len > linkchunk->length || fh_len > ph_len) {
-			_MSG("pcap PPI converter got corrupt/invalid PPI field length",
-				 MSGFLAG_ERROR);
-			return 0;
-		}
-
-		ppi_fh_offt += fh_len + sizeof(ppi_field_header);
-
-		if (fh_type == PPI_FIELD_11COMMON) {
-			// printf("debug - 80211 common\n");
-			ppi_80211_common *ppic = (ppi_80211_common *) ppi_fh;
-
-			// Common flags
-			tuint = kis_letoh16(ppic->flags);
-			if ((tuint & PPI_80211_FLAG_INVALFCS) ||
-				(tuint & PPI_80211_FLAG_PHYERROR)) {
-				// Junk packets that are FCS or phy compromised
-				return 0;
-			}
-
-			if (tuint & PPI_80211_FLAG_FCS) {
-				applyfcs = 1;
-			}
-
-			if ((tuint & PPI_80211_FLAG_FCS) && (tuint & PPI_80211_FLAG_INVALFCS)) {
-				applyfcs = 1;
-				fcsknownbad = 1;
-			}
-
-			if (radioheader == NULL)
-				radioheader = new kis_layer1_packinfo;
-
-			// Channel flags
-			tuint = kis_letoh16(ppic->chan_flags);
-			if (tuint & PPI_80211_CHFLAG_CCK) 
-				radioheader->encoding = encoding_cck;
-			if (tuint & PPI_80211_CHFLAG_OFDM) 
-				radioheader->encoding = encoding_ofdm;
-			if (tuint & PPI_80211_CHFLAG_DYNAMICCCK) 
-				radioheader->encoding = encoding_dynamiccck;
-			if (tuint & PPI_80211_CHFLAG_GFSK) 
-				radioheader->encoding = encoding_gfsk;
-			if (tuint & PPI_80211_CHFLAG_TURBO)
-				radioheader->carrier = carrier_80211bplus;
-			if ((tuint & PPI_80211_CHFLAG_OFDM) &&
-				(tuint & PPI_80211_CHFLAG_2GHZ))
-				radioheader->carrier = carrier_80211g;
-			if (tuint & PPI_80211_CHFLAG_5GHZ)
-				radioheader->carrier = carrier_80211a;
-
-			radioheader->signal_dbm = ppic->signal_dbm;
-			radioheader->noise_dbm = ppic->noise_dbm;
-
-			radioheader->datarate = kis_letoh16(ppic->rate) * 5;
-
-			radioheader->freq_mhz = kis_letoh16(ppic->freq_mhz);
-		} else if (fh_type == PPI_FIELD_11NMAC) {
-			ppi_11n_mac *ppin = (ppi_11n_mac *) ppi_fh;
-
-			if (radioheader == NULL)
-				radioheader = new kis_layer1_packinfo;
-
-			// Decode greenfield notation
-			tuint = kis_letoh16(ppin->flags);
-			if (tuint & PPI_11NMAC_HT2040)
-				radioheader->carrier = carrier_80211n20;
-			else
-				radioheader->carrier = carrier_80211n40;
-
-		} else if (fh_type == PPI_FIELD_11NMACPHY) {
-			ppi_11n_macphy *ppinp = (ppi_11n_macphy *) ppi_fh;
-
-			if (radioheader == NULL)
-				radioheader = new kis_layer1_packinfo;
-
-			// Decode greenfield notation
-			tuint = kis_letoh16(ppinp->flags);
-			if (tuint & PPI_11NMAC_HT2040)
-				radioheader->carrier = carrier_80211n20;
-			else
-				radioheader->carrier = carrier_80211n40;
-		} else if (fh_type == PPI_FIELD_GPS) {
-			ppi_gps_hdr *ppigps = (ppi_gps_hdr *) ppi_fh;
-
-			if (ppigps->version == 0) {
-				unsigned int data_offt = 0;
-				uint32_t fields_present = kis_letoh32(ppigps->fields_present);
-				uint16_t gps_len = kis_letoh16(ppigps->gps_len) - sizeof(ppi_gps_hdr);
-
-				union block {
-					uint8_t u8;
-					uint16_t u16;
-					uint32_t u32;
-					uint64_t u64;
-				} *u;
-
-				// printf("debug - gps present, %u len %d %d %d %d\n", fields_present, gps_len, fields_present & PPI_GPS_FLAG_LAT, fields_present & PPI_GPS_FLAG_LON, fields_present & PPI_GPS_FLAG_ALT);
-
-				if ((fields_present & PPI_GPS_FLAG_LAT) &&
-					(fields_present & PPI_GPS_FLAG_LON) &&
-					gps_len - data_offt >= 8) {
-
-					if (gpsinfo == NULL)
-						gpsinfo = new kis_gps_packinfo;
-
-					u = (block *) &(ppigps->field_data[data_offt]);
-					gpsinfo->lat = fixed3_7_to_double(kis_letoh32(u->u32));
-					data_offt += 4;
-
-					u = (block *) &(ppigps->field_data[data_offt]);
-					gpsinfo->lon = fixed3_7_to_double(kis_letoh32(u->u32));
-					data_offt += 4;
-
-					gpsinfo->gps_fix = 2;
-					gpsinfo->alt = 0;
-				}
-
-                //Speed is stored as a velocity in VECTOR tags..
-                /*
-				if ((fields_present & PPI_GPS_FLAG_SPD) &&
-					gps_len - data_offt >= 4) {
-
-					u = (block *) &(ppigps->field_data[data_offt]);
-					gpsinfo->spd = fixed3_7_to_double(kis_letoh32(u->u32));
-					data_offt += 4;
-				}
-                */
-
-				if ((fields_present & PPI_GPS_FLAG_ALT) && gps_len - data_offt >= 4) {
-					gpsinfo->gps_fix = 3;
-
-					u = (block *) &(ppigps->field_data[data_offt]);
-					gpsinfo->alt = fixed6_4_to_double(kis_letoh32(u->u32));
-					data_offt += 4;
-				}
-
-				packet->insert(_PCM(PACK_COMP_GPS), gpsinfo);
-			}
+			fcschunk->checksum_valid = 1;
 		}
 	}
 
-	if (applyfcs)
-		applyfcs = 4;
+	packet->insert(_PCM(PACK_COMP_DECAP), eight11chunk);
 
-	eight11chunk = new kis_datachunk;
-
-	eight11chunk->dlt = KDLT_IEEE802_11;
-
-	// Subtract the packet FCS since kismet doesn't do anything terribly bright
-	// with it right now, also subtract the avs header.  We have to obey the
-	// header length here since avs could change
-	eight11chunk->length = kismin((linkchunk->length - ph_len - applyfcs), 
-								  (uint32_t) MAX_PACKET_LEN);
-
-	eight11chunk->data = new uint8_t[eight11chunk->length];
-    memcpy(eight11chunk->data, linkchunk->data + ph_len, eight11chunk->length);
-
-	if (radioheader != NULL)
-		packet->insert(_PCM(PACK_COMP_RADIODATA), radioheader);
-	packet->insert(_PCM(PACK_COMP_80211FRAME), eight11chunk);
-
-	kis_fcs_bytes *fcschunk = NULL;
-	if (applyfcs && linkchunk->length > 4) {
-		fcschunk = new kis_fcs_bytes;
-		memcpy(fcschunk->fcs, &(linkchunk->data[linkchunk->length - 4]), 4);
-	
-		// Listen to the PPI file for known bad, regardless if we have validate
-		// turned on or not
-		if (fcsknownbad)
-			fcschunk->fcsvalid = 0;
-		else
-			fcschunk->fcsvalid = 1;
-
-		packet->insert(_PCM(PACK_COMP_FCSBYTES), fcschunk);
-	}
-
-	// If we're validating the FCS
-	if (validate_fcs && fcschunk != NULL) {
-		// Compare it and flag the packet
-		uint32_t calc_crc =
-			crc32_le_80211(globalreg->crc32_table, eight11chunk->data, 
-						   eight11chunk->length);
-
-		if (memcmp(fcschunk->fcsp, &calc_crc, 4)) {
-			packet->error = 1;
-			fcschunk->fcsvalid = 0;
-			fprintf(stderr, "debug - rtap to kis, fcs invalid\n");
-		} else {
-			fcschunk->fcsvalid = 1;
-		}
-	}
-
-    return 1;
+	return 1;
 }
 
 int PacketSource_Pcap::FetchHardwareChannel() {

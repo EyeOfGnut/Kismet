@@ -1549,9 +1549,8 @@ int kis_80211_datatracker_hook(CHAINCALL_PARMS) {
 }
 
 int NetrackerUpdateTimer(TIMEEVENT_PARMS) {
-	Netracker *ntr = (Netracker *) parm;
-
-	return ntr->TimerKick();
+	((Netracker *) auxptr)->TimerKick();
+	return 1;
 }
 
 Netracker::Netracker() {
@@ -1770,7 +1769,7 @@ Netracker::Netracker(GlobalRegistry *in_globalreg) {
 			if (study)
 				pcre_free(study);
 #endif
-			free(ssid_alert);
+			delete ssid_alert;
 			continue;
 		}
 
@@ -1879,8 +1878,7 @@ Netracker::Netracker(GlobalRegistry *in_globalreg) {
 
 	// Build the config file
 	conf_save = globalreg->timestamp.tv_sec;
-	ssid_conf = new ConfigFile(globalreg);
-	ssid_conf->ParseConfig(ssid_conf->ExpandLogPath(globalreg->kismet_config->FetchOpt("configdir") + "/" + "ssid_map.conf", "", "", 0, 1).c_str());
+	ssid_conf = (ConfigFile *) globalreg->FetchGlobal("SSID_CONF_FILE");
 
 	tag_conf = new ConfigFile(globalreg);
 	tag_conf->ParseConfig(tag_conf->ExpandLogPath(globalreg->kismet_config->FetchOpt("configdir") + "/" + "tag.conf", "", "", 0, 1).c_str());
@@ -1899,6 +1897,38 @@ Netracker::~Netracker() {
 	if (netcli_filter != NULL)
 		delete netcli_filter;
 
+	for (map<mac_addr, Netracker::tracked_network *>::iterator n = tracked_map.begin();
+		 n != tracked_map.end(); ++n) {
+		for (map<uint32_t, Netracker::adv_ssid_data *>::iterator s =
+			 n->second->ssid_map.begin(); s != n->second->ssid_map.end(); ++s) {
+			delete s->second;
+		}
+
+		for (map<uuid, source_data *>::iterator sd = 
+			 n->second->source_map.begin(); sd != n->second->source_map.end();
+			 ++sd) {
+			delete sd->second;
+		}
+
+		for (map<mac_addr, Netracker::tracked_client *>::iterator c = 
+			 n->second->client_map.begin(); c != n->second->client_map.end(); ++c) {
+
+			for (map<uint32_t, Netracker::adv_ssid_data *>::iterator s =
+				 c->second->ssid_map.begin(); s != c->second->ssid_map.end(); ++s) {
+				delete s->second;
+			}
+
+			for (map<uuid, source_data *>::iterator sd = 
+				 c->second->source_map.begin(); sd != c->second->source_map.end();
+				 ++sd) {
+				delete sd->second;
+			}
+
+			delete c->second;
+		}
+
+		delete n->second;
+	}
 }
 
 void Netracker::SaveSSID() {
@@ -2313,7 +2343,7 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 	Packinfo_Sig_Combo *sc = NULL;
 
 	// Fetch the info from the packet chain data
-	kis_ieee80211_packinfo *packinfo = (kis_ieee80211_packinfo *) 
+	dot11_packinfo *packinfo = (dot11_packinfo *) 
 		in_pack->fetch(_PCM(PACK_COMP_80211));
 	kis_gps_packinfo *gpsinfo = (kis_gps_packinfo *) 
 		in_pack->fetch(_PCM(PACK_COMP_GPS));
@@ -2423,6 +2453,7 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 		// outside of the new network code, obviously
 	} else {
 		if (packinfo->distrib == distrib_adhoc && net->type == network_ap) {
+#if 0
 			if (globalreg->alertracker->PotentialAlert(alert_adhoc_ref)) {
 
 				string al = "Network BSSID " + net->bssid.Mac2String() + 
@@ -2437,6 +2468,7 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 												   packinfo->channel, al);
 
 			}
+#endif
 		} else if (packinfo->type == packet_management && packinfo->ess &&
 				   net->type == network_data) {
 			// Management frames from an AP on a data-only network turn it into
@@ -2586,6 +2618,10 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 		}
 	}
 
+	if (sc != NULL) {
+		delete sc;
+		sc = NULL;
+	}
 
 	// Add to the LLC count
 	if (packinfo->type == packet_management) {
@@ -2627,37 +2663,12 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 			adssid = BuildAdvSSID(packinfo->ssid_csum, packinfo, in_pack);
 			adssid->type = ssid_probereq;
 			cli->ssid_map[packinfo->ssid_csum] = adssid;
+
+			// Don't change established SSID crypt records from a probe
+			adssid->cryptset = packinfo->cryptset;
 		} else {
 			adssid = ssidi->second;
 		}
-
-		// Alert on crypto change
-		if (adssid->cryptset != packinfo->cryptset && adssid->cryptset != 0 &&
-			globalreg->alertracker->PotentialAlert(alert_wepflap_ref)) {
-			ostringstream outs;
-
-			outs << "Network BSSID " << net->bssid.Mac2String() << 
-				" changed advertised SSID '" + packinfo->ssid + 
-				"' encryption ";
-
-			if (packinfo->cryptset == 0)
-				outs << "to no encryption when it was previous advertised, an "
-					"impersonation attack may be underway";
-			else if (packinfo->cryptset < adssid->cryptset)
-				outs << "to a weaker encryption set than previously "
-					"advertised, which may indicate an attack";
-			else
-				outs << "a different encryption set than previous advertised";
-
-			globalreg->alertracker->RaiseAlert(alert_wepflap_ref, in_pack, 
-											   packinfo->bssid_mac, 
-											   packinfo->source_mac, 
-											   packinfo->dest_mac, 
-											   packinfo->other_mac, 
-											   packinfo->channel, outs.str());
-		}
-
-		adssid->cryptset = packinfo->cryptset;
 
 		adssid->last_time = globalreg->timestamp.tv_sec;
 		adssid->packets++;
@@ -2722,6 +2733,7 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 
 		adssid->dirty = 1;
 
+#if 0
 		if (alert_airjackssid_ref >= 0 && packinfo->ssid == "AirJack" &&
 			globalreg->alertracker->PotentialAlert(alert_airjackssid_ref)) {
 			ostringstream outs;
@@ -2756,11 +2768,13 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 												   outs.str());
 			}
 		}
+#endif
 
 		// Copy the crypto data
 		adssid->cryptset = packinfo->cryptset;
 
 		// Fire off an alert if the channel changes
+#if 0
 		if (alert_chan_ref >= 0 && newnetwork == 0 && net->channel != 0 &&
 			packinfo->channel != 0 && net->channel != packinfo->channel &&
 			globalreg->alertracker->PotentialAlert(alert_chan_ref)) {
@@ -2776,6 +2790,7 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 											   packinfo->other_mac, 
 											   packinfo->channel, outs.str());
 		}
+#endif
 
 		if (packinfo->channel != 0) {
 			// Inherit the channel from the beacon
@@ -2874,6 +2889,7 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 		adssid->dirty = 1;
 	}
 
+#if 0
 	// Fire an alert on a disconnect/deauth broadcast
 	if (alert_bcastdcon_ref >= 0 && packinfo->type == packet_management &&
 		(packinfo->subtype == packet_sub_disassociation ||
@@ -2892,6 +2908,7 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 										   packinfo->other_mac, 
 										   packinfo->channel, outs.str());
 	}
+#endif
 
 	if (packinfo->type == packet_management ||
 		packinfo->type == packet_phy) {
@@ -2960,6 +2977,7 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 			ssid = packinfo->ssid;
 		}
 
+		/*
 		snprintf(status, STATUS_MAX, "Detected new %s network \"%s\", BSSID %s, "
 				 "encryption %s, channel %d, %2.2f mbit",
 				 nettype.c_str(),
@@ -2968,6 +2986,7 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 				 packinfo->cryptset ? "yes" : "no",
 				 net->channel, packinfo->maxrate);
 		_MSG(status, MSGFLAG_INFO);
+		*/
 
 		// Check filtering and send BSSID
 		int filtered = 0;
@@ -3023,7 +3042,7 @@ int Netracker::netracker_chain_handler(kis_packet *in_pack) {
 
 int Netracker::datatracker_chain_handler(kis_packet *in_pack) {
 	// Fetch the info from the packet chain data
-	kis_ieee80211_packinfo *packinfo = (kis_ieee80211_packinfo *) 
+	dot11_packinfo *packinfo = (dot11_packinfo *) 
 		in_pack->fetch(_PCM(PACK_COMP_80211));
 
 	// No 802.11 info, we don't handle it.
@@ -3074,7 +3093,7 @@ int Netracker::datatracker_chain_handler(kis_packet *in_pack) {
 
 	if (chunk == NULL) {
 		if ((chunk = 
-			 (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_80211FRAME))) == NULL) {
+			 (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_DECAP))) == NULL) {
 			if ((chunk = (kis_datachunk *) 
 				 in_pack->fetch(_PCM(PACK_COMP_LINKFRAME))) == NULL) {
 				return 0;
@@ -3105,6 +3124,7 @@ int Netracker::datatracker_chain_handler(kis_packet *in_pack) {
 
 	// Apply the DHCP discovery on the client
 	if (datainfo->proto  == proto_dhcp_discover) {
+#if 0
 		if (cli->dhcp_host != datainfo->discover_host &&
 			cli->dhcp_host != "" && 
 			globalreg->alertracker->PotentialAlert(alert_dhcpname_ref)) {
@@ -3138,6 +3158,7 @@ int Netracker::datatracker_chain_handler(kis_packet *in_pack) {
 											   packinfo->other_mac, 
 											   packinfo->channel, al);
 		}
+#endif
 
 		cli->dhcp_host = datainfo->discover_host;
 		cli->dhcp_vendor = datainfo->discover_vendor;
@@ -3394,7 +3415,7 @@ const map<mac_addr, Netracker::tracked_network *> Netracker::FetchProbeNets() {
 }
 
 Netracker::adv_ssid_data *Netracker::BuildAdvSSID(uint32_t ssid_csum, 
-												  kis_ieee80211_packinfo *packinfo,
+												  dot11_packinfo *packinfo,
 												  kis_packet *in_pack) {
 	Netracker::adv_ssid_data *adssid;
 	Netracker::tracked_network *net = NULL;
@@ -3446,6 +3467,7 @@ Netracker::adv_ssid_data *Netracker::BuildAdvSSID(uint32_t ssid_csum,
 		(packinfo->subtype == packet_sub_probe_resp || 
 		 packinfo->subtype == packet_sub_beacon)) {
 
+#if 0
 		// Run it through the AP spoof protection system
 		for (unsigned int x = 0; x < apspoof_vec.size(); x++) {
 			// Shortcut to checking the mac address first, if it's one we 
@@ -3498,8 +3520,10 @@ Netracker::adv_ssid_data *Netracker::BuildAdvSSID(uint32_t ssid_csum,
 				break;
 			}
 		}
+#endif
 	}
 
 	return adssid;
 }
 
+// vim: ts=4:sw=4

@@ -398,6 +398,7 @@ int IPCRemote::SyncIPC() {
 
 			ipc_packet *pack = 
 				(ipc_packet *) malloc(sizeof(ipc_packet) + sizeof(ipc_sync));
+			memset(pack, 0, sizeof(ipc_packet) + sizeof(ipc_sync));
 
 			ipc_sync *sync = (ipc_sync *) pack->data;
 
@@ -416,6 +417,7 @@ int IPCRemote::SyncIPC() {
 	// Send a cmdid 0 to indicate the end of sync
 	ipc_packet *pack = 
 		(ipc_packet *) malloc(sizeof(ipc_packet) + sizeof(ipc_sync));
+	memset(pack, 0, sizeof(ipc_packet) + sizeof(ipc_sync));
 	ipc_sync *sync = (ipc_sync *) pack->data;
 	sync->ipc_cmdnum = 0;
 	sync->name[0] = '\0';
@@ -450,6 +452,7 @@ int IPCRemote::ShutdownIPC(ipc_packet *pack) {
 	// if we're the parent of the child, a clean shutdown will signal the other
 	// side it's time to shuffle off
 	ipc_packet *dpack = (ipc_packet *) malloc(sizeof(ipc_packet));
+	memset(dpack, 0, sizeof(ipc_packet));
 	dpack->data_len = 0;
 	dpack->ipc_cmdnum = DIE_CMD_ID;
 	dpack->ipc_ack = 0;
@@ -457,6 +460,8 @@ int IPCRemote::ShutdownIPC(ipc_packet *pack) {
 
 	// Send it immediately
 	send(sock, dpack, sizeof(ipc_packet) + dpack->data_len, 0);
+
+  free (dpack);
 
 	// Die fully
 	IPCDie();
@@ -671,6 +676,9 @@ int IPCRemote::Poll(fd_set& in_rset, fd_set& in_wset) {
 
 	// Process packets out
 	if (FD_ISSET(sock, &in_wset)) {
+		if (CheckPidVec() < 0)
+			return -1;
+
 		// printf("debug - %d %p poll wset\n", getpid(), this);
 		// Send as many frames as we have room for if we're not waiting for an ack
 		while (cmd_buf.size() > 0 && ipc_spawned > 0) {
@@ -780,6 +788,7 @@ int IPCRemote::Poll(fd_set& in_rset, fd_set& in_wset) {
 
 		// Get the full packet
 		fullpack = (ipc_packet *) malloc(sizeof(ipc_packet) + ipchdr.data_len);
+		memset(fullpack, 0, sizeof(ipc_packet) + ipchdr.data_len);
 
 		if ((ret = recv(sock, fullpack, sizeof(ipc_packet) + ipchdr.data_len, 0)) < 
 			(int) sizeof(ipc_packet) + (int) ipchdr.data_len) {
@@ -898,7 +907,7 @@ int RootIPCRemote::OpenFDPassSock() {
 
 	// Child creates it, since child probably has more privs
 	if (ipc_pid != 0) {
-		printf("debug - %d - child creating ipc fdfd\n", getpid());
+		// printf("debug - %d - child creating ipc fdfd\n", getpid());
 
 		snprintf(sockpath, 32, "/tmp/kisfdsock_%d", ipc_pid);
 

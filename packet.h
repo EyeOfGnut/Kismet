@@ -33,6 +33,7 @@
 #include <vector>
 #include <map>
 
+#include "globalregistry.h"
 #include "macaddr.h"
 #include "packet_ieee80211.h"
 
@@ -66,143 +67,112 @@ public:
     // itself?
     int error;
 
+	// Have we been filtered for some reason?
+	int filtered;
+
 	// Actual vector of bits in the packet
 	vector<packet_component *> content_vec;
    
     // Init stuff
     kis_packet() {
-        error = 0;
+		fprintf(stderr, "FATAL: kis_packet()\n"); exit(1);
+	}
 
-		// Stock and init the content vector
-		content_vec.resize(MAX_PACKET_COMPONENTS, NULL);
-		/*
-		for (unsigned int y = 0; y < MAX_PACKET_COMPONENTS; y++)
-			content_vec[y] = NULL;
-		*/
-    }
-
-    ~kis_packet() {
-        // Delete everything we contain when we die.  I hope whomever put
-        // it there expected this.
-		for (unsigned int y = 0; y < MAX_PACKET_COMPONENTS; y++) {
-			packet_component *pcm = content_vec[y];
-
-			if (pcm == NULL)
-				continue;
-
-			// If it's marked for self-destruction, delete it.  Otherwise, 
-			// someone else is responsible for removing it.
-			if (pcm->self_destruct)
-				delete pcm;
-
-			content_vec[y] = NULL;
-        }
-    }
+	kis_packet(GlobalRegistry *in_globalreg);
+    ~kis_packet();
    
-    inline void insert(const unsigned int index, packet_component *data) {
-		if (index >= MAX_PACKET_COMPONENTS)
-			return;
-        content_vec[index] = data;
-    }
-    inline void *fetch(const unsigned int index) {
-		if (index >= MAX_PACKET_COMPONENTS)
-			return NULL;
+    void insert(const unsigned int index, packet_component *data);
+    void *fetch(const unsigned int index) const;
+    void erase(const unsigned int index);
 
-		return content_vec[index];
-    }
-    inline void erase(const unsigned int index) {
-		if (index >= MAX_PACKET_COMPONENTS)
-			return;
-
-        // Delete it if we can - both from our array and from 
-        // memory.  Whatever inserted it had better expect this
-        // to happen or it will be very unhappy
-		if (content_vec[index] != NULL) {
-			if (content_vec[index]->self_destruct)
-				delete content_vec[index];
-
-			content_vec[index] = NULL;
-        }
-    }
     inline packet_component *operator[] (const unsigned int& index) const {
 		if (index >= MAX_PACKET_COMPONENTS)
 			return NULL;
 
 		return content_vec[index];
     }
+
+protected:
+	GlobalRegistry *globalreg;
 };
 
-// Arbitrary 802.11 data chunk
+// Arbitrary data chunk, decapsulated from the link headers
 class kis_datachunk : public packet_component {
 public:
     uint8_t *data;
     unsigned int length;
 	int dlt;
 	uint16_t source_id;
+	bool self_data;
    
     kis_datachunk() {
 		self_destruct = 1; // Our delete() handles everything
+		self_data = true; // We assume for now we have our own data alloc
         data = NULL;
         length = 0;
 		source_id = 0;
     }
 
     virtual ~kis_datachunk() {
-        delete[] data;
+		if (data != NULL && self_data) {
+			delete[] data;
+		}
         length = 0;
     }
+
+	// Default to copy=true; it's always safe to copy, it's not always safe not to
+	virtual void set_data(uint8_t *in_data, unsigned int in_length, bool copy = true) {
+		if (data != NULL && self_data)
+			delete[] data;
+
+		if (copy) {
+			data = new uint8_t[in_length];
+			memcpy(data, in_data, in_length);
+			self_data = true;
+		} else {
+			data = in_data;
+			self_data = false;
+		}
+
+		length = in_length;
+	}
 };
 
-class kis_fcs_bytes : public packet_component {
+class kis_packet_checksum : public kis_datachunk {
 public:
-	kis_fcs_bytes() {
+	int checksum_valid;
+	uint32_t *checksum_ptr;
+
+	kis_packet_checksum() : kis_datachunk() {
+		checksum_valid = 0;
+	}
+
+	virtual void set_data(uint8_t *in_data, unsigned int in_length) {
+		kis_datachunk::set_data(in_data, in_length, true);
+		checksum_ptr = (uint32_t *) data;
+	}
+};
+
+enum kis_packet_basictype {
+	packet_basic_unknown = 0,
+	packet_basic_mgmt = 1,
+	packet_basic_data = 2,
+	packet_basic_phy = 3
+};
+
+// Common info
+// Extracted by phy-specific dissectors, used by the common classifier
+// to build phy-neutral devices and tracking records.
+class kis_common_info : public packet_component {
+public:
+	kis_common_info() {
 		self_destruct = 1;
-		fcs[0] = fcs[1] = fcs[2] = fcs[3] = 0;
-		fcsp = (uint32_t *) fcs;
-		fcsvalid = 0;
-	}
-
-	uint8_t fcs[4];
-	uint32_t *fcsp;
-	int fcsvalid;
-};
-
-// Dot11d struct
-struct dot11d_range_info {
-	dot11d_range_info() {
-		startchan = 0;
-		numchan = 0;
-		txpower = 0;
-	}
-
-	int startchan, numchan, txpower;
-};
-
-
-// Info from the IEEE 802.11 frame headers for kismet
-class kis_ieee80211_packinfo : public packet_component {
-public:
-    kis_ieee80211_packinfo() {
-		self_destruct = 1; // Our delete() handles this
-        corrupt = 0;
-        header_offset = 0;
-        type = packet_unknown;
-        subtype = packet_sub_unknown;
-        mgt_reason_code = 0;
-        ssid_len = 0;
-		ssid_blank = 0;
-        source_mac = mac_addr(0);
-        dest_mac = mac_addr(0);
-        bssid_mac = mac_addr(0);
-        other_mac = mac_addr(0);
-        distrib = distrib_unknown;
-		cryptset = 0;
-		decrypted = 0;
-        fuzzywep = 0;
-		fmsweak = 0;
-        ess = 0;
-		ibss = 0;
+		type = packet_basic_unknown;
+		phyid = 0;
+		error = 0;
+		datasize = 0;
 		channel = 0;
+<<<<<<< HEAD
         encrypted = 0;
         beacon_interval = 0;
         maxrate = 0;
@@ -222,68 +192,35 @@ public:
         wps_model_name = "";
         wps_model_number = "";
     }
+=======
+		basic_crypt_set = 0;
+		source = mac_addr(0);
+		dest = mac_addr(0);
+		device = mac_addr(0);
+	}
+>>>>>>> upstream/master
 
-    // Corrupt 802.11 frame
-    int corrupt;
-   
-    // Offset to data components in frame
-    unsigned int header_offset;
-    
-    ieee_80211_type type;
-    ieee_80211_subtype subtype;
-  
-    uint8_t mgt_reason_code;
-    
-    // Raw SSID
-	string ssid;
-	// Length of the SSID header field
-    int ssid_len;
-	// Is the SSID empty spaces?
-	int ssid_blank;
-
-    // Address set
-    mac_addr source_mac;
-    mac_addr dest_mac;
-    mac_addr bssid_mac;
-    mac_addr other_mac;
-    
-    ieee_80211_disttype distrib;
- 
-	uint64_t cryptset;
-	int decrypted; // Might as well put this in here?
-    int fuzzywep;
-	int fmsweak;
-
-    // Was it flagged as ess? (ap)
-    int ess;
-	int ibss;
-
-	// What channel does it report
+	mac_addr source, dest, device;
+	kis_packet_basictype type;
+	int phyid;
+	// Some sort of phy-level error 
+	int error;
+	// Data size if applicable
+	int datasize;
+	// Encryption if applicable
+	uint32_t basic_crypt_set;
+	// Phy-specific numeric channel, freq is held in l1info
 	int channel;
+};
 
-    // Is this encrypted?
-    int encrypted;
-    int beacon_interval;
+// String reference
+class kis_string_info : public packet_component {
+public:
+	kis_string_info() {
+		self_destruct = 1;
+	}
 
-	uint16_t qos;
-
-    // Some cisco APs seem to fill in this info field
-	string beacon_info;
-
-    double maxrate;
-
-    uint64_t timestamp;
-    int sequence_number;
-    int frag_number;
-	int fragmented;
-	int retry;
-
-    int duration;
-
-    int datasize;
-
-	uint32_t ssid_csum;
-
+<<<<<<< HEAD
 	string dot11d_country;
 	vector<dot11d_range_info> dot11d_vec;
     
@@ -299,7 +236,17 @@ public:
     string wps_model_number;
     // There's also the serial number field but we don't care
     // about it because it's almost always bogus.
+=======
+	vector<string> extracted_strings;
+>>>>>>> upstream/master
 };
+
+typedef struct {
+	string text;
+	mac_addr bssid;
+	mac_addr source;
+	mac_addr dest;
+} string_proto_info;
 
 // some protocols we do try to track
 enum kis_protocol_info_type {
@@ -313,14 +260,10 @@ enum kis_protocol_info_type {
     proto_turbocell,
 	proto_netstumbler_probe,
 	proto_lucent_probe,
-    proto_iapp,
-    proto_leap,
-    proto_ttls,
-    proto_tls,
-    proto_peap,
-	proto_eap_unknown,
-    proto_isakmp,
-    proto_pptp,
+	proto_iapp,
+	proto_isakmp,
+	proto_pptp,
+	proto_eap
 };
 
 class kis_data_packinfo : public packet_component {
@@ -364,6 +307,9 @@ public:
 	// An extra field that can be filled in
 	int field1;
 
+	// A string field that can be filled in
+	string auxstring;
+
 };
 
 // Layer 1 radio info record for kismet
@@ -378,6 +324,7 @@ public:
 		datarate = 0;
 		freq_mhz = 0;
 		accuracy = 0;
+		channel = 0;
 	}
 
 	// How "accurate" are we?  Higher == better.  Nothing uses this yet
@@ -386,6 +333,9 @@ public:
 
 	// Frequency seen on
 	int freq_mhz;
+
+	// Logical channel
+	int channel;
 
     // Connection info
     int signal_dbm, signal_rssi;

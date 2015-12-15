@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 kismet (2014.02.1) unstable; urgency=low
 
   * 2014.02.R1 release
@@ -10,6 +11,8 @@ kismet (2013.03.1) unstable; urgency=low
 
  -- Kismet Release <kismet-release@kismetwireless.net>  Mon, 18 Mar 2013 19:00:00 -0500
 
+=======
+>>>>>>> upstream/master
 kismet (2013.0.0) unstable; urgency=low
 
   * Git build.

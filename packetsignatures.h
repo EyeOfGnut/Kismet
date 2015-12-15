@@ -67,6 +67,10 @@ const uint8_t FORTRESS_SIGNATURE[] = {0x00, 0x00, 0x00, 0x88, 0x95};
 // WPA/WPA2 identifiers
 const uint8_t WPA_OUI[] = {0x00, 0x50, 0xF2};
 const uint8_t RSN_OUI[] = {0x00, 0x0F, 0xAC};
+const uint8_t MSF_OUI[] = {0x00, 0x50, 0xF2};
+
+const uint8_t WPS_VERSION[] = {0x10, 0x4a, 0x00, 0x01, 0x10};
+const uint8_t WPS_CONFIGURED[] = {0x10, 0x44, 0x00, 0x01, 0x02};
 
 // WPS identifier
 const uint8_t WPS_SIG[] = {0x00, 0x50, 0xF2, 0x04};
@@ -82,6 +86,7 @@ const uint8_t EAP_CODE_REQUEST = 1;
 const uint8_t EAP_CODE_RESPONSE = 2;
 const uint8_t EAP_CODE_SUCCESS = 3;
 const uint8_t EAP_CODE_FAILURE = 4;
+const uint8_t EAP_TYPE_IDENTITY = 1;
 const uint8_t EAP_TYPE_TLS  = 13;
 const uint8_t EAP_TYPE_LEAP = 17;
 const uint8_t EAP_TYPE_TTLS = 21;

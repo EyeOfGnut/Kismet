@@ -39,10 +39,14 @@ Dumpfile_Nettxt::Dumpfile_Nettxt(GlobalRegistry *in_globalreg) :
 	txtfile = NULL;
 
 	type = "nettxt";
+	logclass = "text";
 
 	if (globalreg->netracker == NULL) {
-		fprintf(stderr, "FATAL OOPS:  Netracker missing before Dumpfile_Nettxt\n");
-		exit(1);
+		_MSG("Deprecated netracker core disabled, disabling nettxt logfile.", 
+			 MSGFLAG_INFO);
+		// fprintf(stderr, "FATAL OOPS:  Netracker missing before Dumpfile_Nettxt\n");
+		// exit(1);
+		return;
 	}
 
 	if (globalreg->kismet_config == NULL) {
@@ -56,7 +60,7 @@ Dumpfile_Nettxt::Dumpfile_Nettxt(GlobalRegistry *in_globalreg) :
 	}
 
 	// Find the file name
-	if ((fname = ProcessConfigOpt("nettxt")) == "" || 
+	if ((fname = ProcessConfigOpt()) == "" ||
 		globalreg->fatal_condition) {
 		return;
 	}

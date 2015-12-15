@@ -56,15 +56,13 @@
 #include <plugintracker.h>
 #include <globalregistry.h>
 #include <netracker.h>
-#include <packetdissectors.h>
 #include <alertracker.h>
 #include <dumpfile_pcap.h>
 #include <version.h>
 
 #include "packetsource_linuxbt.h"
 #include "packet_btscan.h"
-#include "tracker_btscan.h"
-#include "dumpfile_btscantxt.h"
+#include "phy_btscan.h"
 
 GlobalRegistry *globalreg = NULL;
 
@@ -84,14 +82,18 @@ int btscan_register(GlobalRegistry *in_globalreg) {
 		return -1;
 #endif
 
+	if (globalreg->kismet_instance != KISMET_INSTANCE_SERVER) {
+		_MSG("Not registering BTSCAN packet handlers, not running on a server.",
+			 MSGFLAG_INFO);
+		return 1;
+	}
+
 	pack_comp_btscan = globalreg->packetchain->RegisterPacketComponent("BTSCAN");
 
-	// Tracker
-	Tracker_BTScan *trackbtscan = new Tracker_BTScan(globalreg);
-
-	Dumpfile_Btscantxt *bttxt = new Dumpfile_Btscantxt(globalreg);
-	bttxt->SetVolatile(1);
-	bttxt->SetTracker(trackbtscan);
+	if (globalreg->devicetracker->RegisterPhyHandler(new Btscan_Phy(globalreg)) < 0) {
+		_MSG("Failed to install BTScan PHY handler", MSGFLAG_ERROR);
+		return -1;
+	}
 
 	return 1;
 }

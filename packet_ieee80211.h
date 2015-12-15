@@ -63,6 +63,10 @@ enum ieee_80211_subtype {
     packet_sub_disassociation = 10,
     packet_sub_authentication = 11,
     packet_sub_deauthentication = 12,
+	packet_sub_action = 13,
+	packet_sub_action_noack = 14,
+	packet_sub_aruba = 15,
+
     // Phy subtypes
 	packet_sub_pspoll = 10,
     packet_sub_rts = 11,
@@ -201,6 +205,7 @@ typedef struct {
     unsigned pdu_len : 16;
 } __attribute__ ((packed)) iapp_pdu_header;
 
+<<<<<<< HEAD
 // Crypt bitfield
 enum crypt_type {
 	crypt_none = 0,
@@ -239,6 +244,45 @@ enum wps_state {
     wps_not_configured = (1 << 1),
     wps_locked = (1 << 2)
 };
+=======
+// Crypt bitfield ... broken out of enum thanks to c++ < 0x11 not understanding
+// enum widths
+// Basic types
+#define crypt_none 			0
+#define crypt_unknown		1
+#define crypt_wep			(1 << 1)
+#define crypt_layer3		(1 << 2)
+// Derived from WPA IEs
+#define crypt_wep40			(1 << 3)
+#define crypt_wep104		(1 << 4)
+#define crypt_tkip			(1 << 5)
+#define crypt_wpa			(1 << 6)
+#define crypt_psk			(1 << 7)
+#define crypt_aes_ocb		(1 << 8)
+#define crypt_aes_ccm		(1 << 9)
+//WPA Migration Mode
+#define crypt_wpa_migmode	(1 << 10)
+// Derived from data traffic
+#define crypt_eap			(1 << 11)
+#define crypt_leap			(1 << 12)
+#define crypt_ttls			(1 << 13)
+#define crypt_tls			(1 << 14)
+#define crypt_peap			(1 << 15)
+// Lower byte mask - cryptset & protectmask yields basic setting, ie cannot be
+// WEP+PEAP, but COULD be WEP+ISAKMP or WEP+WPS
+#define crypt_protectmask 	0xFFFFF
+#define crypt_isakmp		(1 << 20)
+#define crypt_pptp			(1 << 21)
+#define crypt_fortress		(1 << 22)
+#define crypt_keyguard		(1 << 23)
+#define crypt_unknown_protected 	(1 << 24)
+#define crypt_unknown_nonwep		(1 << 25)
+#define crypt_wps 					(1 << 26)
+// L3 encryption mask
+#define crypt_l3_mask		0x300004
+// L2 encryption mask
+#define crypt_l2_mask		0xFBFA
+>>>>>>> upstream/master
 
 // Deciphering by casting.  This is bad, and non portable, and we need to not
 // do it in the future but for now it'll work until we redo it with bitmanip

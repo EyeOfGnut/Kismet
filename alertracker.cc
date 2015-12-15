@@ -23,10 +23,12 @@
 #include <sstream>
 
 #include "alertracker.h"
+#include "devicetracker.h"
 #include "configfile.h"
 
 const char *ALERT_fields_text[] = {
-	"sec", "usec", "header", "bssid", "source", "dest", "other", "channel", "text",
+	"sec", "usec", "header", "bssid", "source", "dest", "other", 
+	"channel", "text", "phytype",
 	NULL
 };
 
@@ -83,6 +85,9 @@ int Protocol_ALERT(PROTO_PARMS) {
 				break;
 			case ALERT_text:
 				cache->Cache(fnum, "\001" + info->text + "\001");
+				break;
+			case ALERT_phytype:
+				cache->Cache(fnum, IntToString(info->phy));
 				break;
 			default:
 				out_string = "Unknown field requested.";
@@ -151,7 +156,7 @@ Alertracker::Alertracker(GlobalRegistry *in_globalreg) {
 
 	// Register a KISMET alert type with no rate restrictions
 	_ARM(ALERT_REF_KISMET) =
-		RegisterAlert("KISMET", sat_day, 0, sat_day, 0);
+		RegisterAlert("KISMET", sat_day, 0, sat_day, 0, KIS_PHY_ANY);
 
 	// Parse config file vector of all alerts
 	if (ParseAlertConfig(globalreg->kismet_config) < 0) {
@@ -171,7 +176,7 @@ Alertracker::~Alertracker() {
 
 int Alertracker::RegisterAlert(const char *in_header, alert_time_unit in_unit, 
 							   int in_rate, alert_time_unit in_burstunit,
-							   int in_burst) {
+							   int in_burst, int in_phy) {
 	char err[1024];
 
 	// Bail if this header is registered
@@ -200,6 +205,7 @@ int Alertracker::RegisterAlert(const char *in_header, alert_time_unit in_unit,
 	arec->limit_burst = in_burst;
 	arec->burst_sent = 0;
 	arec->time_last = 0;
+	arec->phy = in_phy;
 
 	alert_name_map[arec->header] = arec->ref_index;
 	alert_ref_map[arec->ref_index] = arec;
@@ -248,7 +254,7 @@ int Alertracker::PotentialAlert(int in_ref) {
 	map<int, alert_rec *>::iterator aritr = alert_ref_map.find(in_ref);
 
 	if (aritr == alert_ref_map.end())
-		return -1;
+		return 0;
 
 	alert_rec *arec = aritr->second;
 
@@ -271,6 +277,7 @@ int Alertracker::RaiseAlert(int in_ref, kis_packet *in_pack,
 	kis_alert_info *info = new kis_alert_info;
 
 	info->header = arec->header;
+	info->phy = arec->phy;
 	gettimeofday(&(info->tm), NULL);
 
 	info->bssid = bssid;
@@ -405,6 +412,7 @@ int Alertracker::ParseAlertConfig(ConfigFile *in_conf) {
 						  &(rec->limit_burst)) < 0) {
 			_MSG("Invalid alert line in config file: " + clines[x], MSGFLAG_FATAL);
 			globalreg->fatal_condition = 1;
+      delete rec;
 			return -1;
 		}
 
@@ -415,6 +423,10 @@ int Alertracker::ParseAlertConfig(ConfigFile *in_conf) {
 }
 
 int Alertracker::ActivateConfiguredAlert(const char *in_header) {
+	return ActivateConfiguredAlert(in_header, KIS_PHY_UNKNOWN);
+}
+
+int Alertracker::ActivateConfiguredAlert(const char *in_header, int in_phy) {
 	string hdr = StrLower(in_header);
 
 	if (alert_conf_map.find(hdr) == alert_conf_map.end()) {
@@ -426,7 +438,7 @@ int Alertracker::ActivateConfiguredAlert(const char *in_header) {
 	alert_conf_rec *rec = alert_conf_map[hdr];
 
 	return RegisterAlert(rec->header.c_str(), rec->limit_unit, rec->limit_rate, 
-						 rec->burst_unit, rec->limit_burst);
+						 rec->burst_unit, rec->limit_burst, in_phy);
 }
 
 const vector<kis_alert_info *> *Alertracker::FetchBacklog() {

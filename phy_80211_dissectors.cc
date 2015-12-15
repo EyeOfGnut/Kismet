@@ -30,18 +30,17 @@
 #include <sstream>
 
 #include "endian_magic.h"
-#include "packetdissectors.h"
+#include "phy_80211.h"
 #include "packetsignatures.h"
 #include "packetchain.h"
 #include "alertracker.h"
 #include "configfile.h"
 #include "packetsource.h"
 
-#define PROTO_SSID_LEN		32
-
 // Handly little global so that it only has to do the ascii->mac_addr transform once
 mac_addr broadcast_mac = "FF:FF:FF:FF:FF:FF";
 
+<<<<<<< HEAD:packetdissectors.cc
 // For 802.11n MCS calculations
 const int CH20GI800 = 0;
 const int CH20GI400 = 1;
@@ -178,8 +177,10 @@ int pbd_blittimer(TIMEEVENT_PARMS) {
 	return 1;
 }
 
+=======
+>>>>>>> upstream/master:phy_80211_dissectors.cc
 // CRC32 index for verifying WEP - cribbed from ethereal
-static const uint32_t wep_crc32_table[256] = {
+static const uint32_t dot11_wep_crc32_table[256] = {
     0x00000000L, 0x77073096L, 0xee0e612cL, 0x990951baL, 0x076dc419L,
     0x706af48fL, 0xe963a535L, 0x9e6495a3L, 0x0edb8832L, 0x79dcb8a4L,
     0xe0d5e91eL, 0x97d2d988L, 0x09b64c2bL, 0x7eb17cbdL, 0xe7b82d07L,
@@ -234,6 +235,7 @@ static const uint32_t wep_crc32_table[256] = {
     0x2d02ef8dL
 };
 
+<<<<<<< HEAD:packetdissectors.cc
 // Hooks into the real functions
 int kis_80211_dissector(CHAINCALL_PARMS) {
 	KisBuiltinDissector *auxptr = (KisBuiltinDissector *) auxdata;
@@ -551,8 +553,10 @@ int KisBuiltinDissector::GetIEEETagOffsets(unsigned int init_offset,
     return 0;
 }
 
+=======
+>>>>>>> upstream/master:phy_80211_dissectors.cc
 // Convert WPA cipher elements into crypt_set stuff
-int KisBuiltinDissector::WPACipherConv(uint8_t cipher_index) {
+int Kis_80211_Phy::WPACipherConv(uint8_t cipher_index) {
 	int ret = crypt_wpa;
 
 	switch (cipher_index) {
@@ -580,7 +584,7 @@ int KisBuiltinDissector::WPACipherConv(uint8_t cipher_index) {
 }
 
 // Convert WPA key management elements into crypt_set stuff
-int KisBuiltinDissector::WPAKeyMgtConv(uint8_t mgt_index) {
+int Kis_80211_Phy::WPAKeyMgtConv(uint8_t mgt_index) {
 	int ret = crypt_wpa;
 
 	switch (mgt_index) {
@@ -599,7 +603,7 @@ int KisBuiltinDissector::WPAKeyMgtConv(uint8_t mgt_index) {
 }
 
 // This needs to be optimized and it needs to not use casting to do its magic
-int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
+int Kis_80211_Phy::PacketDot11dissector(kis_packet *in_pack) {
 	static int debugpcknum = 0;
 
 	if (in_pack->error) {
@@ -611,13 +615,13 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 
     // Extract data, bail if it doesn't exist, make a local copy of what we're
     // inserting into the frame.
-    kis_ieee80211_packinfo *packinfo;
+    dot11_packinfo *packinfo;
 	kis_datachunk *chunk = 
-		(kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_80211FRAME));
+		(kis_datachunk *) in_pack->fetch(pack_comp_decap);
 
 	// If we can't grab an 802.11 chunk, grab the raw link frame
 	if (chunk == NULL) {
-		chunk = (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_LINKFRAME));
+		chunk = (kis_datachunk *) in_pack->fetch(pack_comp_linkframe);
 		if (chunk == NULL) {
 			return 0;
 		}
@@ -639,7 +643,17 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
         return 0;
 	}
 
-    packinfo = new kis_ieee80211_packinfo;
+	kis_common_info *common = 
+		(kis_common_info *) in_pack->fetch(pack_comp_common);
+
+	if (common == NULL) {
+		common = new kis_common_info;
+		in_pack->insert(pack_comp_common, common);
+	}
+
+	common->phyid = phyid;
+
+    packinfo = new dot11_packinfo;
 
     frame_control *fc = (frame_control *) chunk->data;
 
@@ -650,11 +664,11 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
     uint16_t duration = 0;
 
     // 18 bytes of normal address ranges
-    uint8_t *addr0;
-    uint8_t *addr1;
-    uint8_t *addr2;
+    uint8_t *addr0 = NULL;
+    uint8_t *addr1 = NULL;
+    uint8_t *addr2 = NULL;
     // And an optional 6 bytes of address range for ds=0x03 packets
-    uint8_t *addr3;
+    uint8_t *addr3 = NULL;
 
     // We'll fill these in as we go
     packinfo->type = packet_unknown;
@@ -670,6 +684,9 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 
 	// We always have addr0 even on phy
     addr0 = &(chunk->data[4]);
+	// We may have addr2
+	if (chunk->length >= 16)
+		addr1 = &(chunk->data[10]);
 
 	if (fc->more_fragments)
 		packinfo->fragmented = 1;
@@ -691,27 +708,65 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
     if (fc->type == packet_phy) {
         packinfo->type = packet_phy;
 
+		common->type = packet_basic_phy;
+
         // Throw away large phy packets just like we throw away large management.
         // Phy stuff is all really small, so we set the limit smaller.
         if (chunk->length > 128) {
             packinfo->corrupt = 1;
-			in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+			in_pack->insert(pack_comp_80211, packinfo);
             return 0;
         }
 
 		if (fc->subtype == 10) {
 			packinfo->subtype = packet_sub_pspoll;
 
+			if (addr0 == NULL) {
+				packinfo->corrupt = 1;
+				packinfo->corrupt = 1;
+				in_pack->insert(pack_comp_80211, packinfo);
+				return 0;
+			}
+
+            packinfo->source_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+
 		} else if (fc->subtype == 11) {
             packinfo->subtype = packet_sub_rts;
+
+			if (addr0 == NULL || addr1 == NULL) {
+				packinfo->corrupt = 1;
+				packinfo->corrupt = 1;
+				in_pack->insert(pack_comp_80211, packinfo);
+				return 0;
+			}
+
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
 
         } else if (fc->subtype == 12) {
             packinfo->subtype = packet_sub_cts;
 
+			if (addr0 == NULL) {
+				packinfo->corrupt = 1;
+				packinfo->corrupt = 1;
+				in_pack->insert(pack_comp_80211, packinfo);
+				return 0;
+			}
+
+			packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+
         } else if (fc->subtype == 13) {
             packinfo->subtype = packet_sub_ack;
 
-            packinfo->dest_mac = addr0;
+			if (addr0 == NULL) {
+				packinfo->corrupt = 1;
+				packinfo->corrupt = 1;
+				in_pack->insert(pack_comp_80211, packinfo);
+				return 0;
+			}
+
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
 
         } else if (fc->subtype == 14) {
             packinfo->subtype = packet_sub_cf_end;
@@ -724,7 +779,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
         }
 
 		// Nothing more to do if we get a phy
-		in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+		in_pack->insert(pack_comp_80211, packinfo);
 		return 1;
 	}
 
@@ -733,7 +788,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 	// Flat-out dump if it's not big enough to be 80211.
     if (chunk->length < 24) {
 		packinfo->corrupt = 1;
-		in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+		in_pack->insert(pack_comp_80211, packinfo);
         return 0;
 	}
 
@@ -760,7 +815,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 		// TODO: Make this a driver option
         if (chunk->length > 512) {
             packinfo->corrupt = 1;
-            in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+            in_pack->insert(pack_comp_80211, packinfo);
             return 0;
         }
 
@@ -769,52 +824,52 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
         if (fc->subtype == 0) {
             packinfo->subtype = packet_sub_association_req;
 
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
 
         } else if (fc->subtype == 1) {
             packinfo->subtype = packet_sub_association_resp;
 
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
 
         } else if (fc->subtype == 2) {
             packinfo->subtype = packet_sub_reassociation_req;
 
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
 
         } else if (fc->subtype == 3) {
             packinfo->subtype = packet_sub_reassociation_resp;
 
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
 
         } else if (fc->subtype == 4) {
             packinfo->subtype = packet_sub_probe_req;
 
             packinfo->distrib = distrib_to;
+
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
             
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr1;
-           
         } else if (fc->subtype == 5) {
             packinfo->subtype = packet_sub_probe_resp;
 
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
-
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
         } else if (fc->subtype == 8) {
             packinfo->subtype = packet_sub_beacon;
 
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
 
             // If beacons aren't do a broadcast destination, consider them corrupt.
             if (packinfo->dest_mac != broadcast_mac) 
@@ -825,18 +880,18 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 			// Do something smarter in the future
             packinfo->subtype = packet_sub_atim;
 
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
 
             packinfo->distrib = distrib_unknown;
 
         } else if (fc->subtype == 10) {
             packinfo->subtype = packet_sub_disassociation;
 
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
 
             uint16_t rcode;
             memcpy(&rcode, (const char *) &(chunk->data[24]), 2);
@@ -846,9 +901,9 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
         } else if (fc->subtype == 11) {
             packinfo->subtype = packet_sub_authentication;
 
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
 
             uint16_t rcode;
             memcpy(&rcode, (const char *) &(chunk->data[24]), 2);
@@ -858,9 +913,9 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
         } else if (fc->subtype == 12) {
             packinfo->subtype = packet_sub_deauthentication;
 
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
 
             uint16_t rcode;
             memcpy(&rcode, (const char *) &(chunk->data[24]), 2);
@@ -869,6 +924,12 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
         } else {
             packinfo->subtype = packet_sub_unknown;
         }
+
+		// add management addr packet
+		common->source = packinfo->source_mac;
+		common->dest = packinfo->dest_mac;
+		common->device = packinfo->bssid_mac;
+		common->type = packet_basic_mgmt;
 
         if (fc->subtype == packet_sub_probe_req || 
 			fc->subtype == packet_sub_disassociation || 
@@ -883,7 +944,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 			// mgt header, bail.
 			if (chunk->length < 36) {
 				packinfo->corrupt = 1;
-				in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+				in_pack->insert(pack_comp_80211, packinfo);
 				return 0;
 			}
             packinfo->header_offset = 36;
@@ -915,14 +976,14 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 		if (fc->subtype == packet_sub_beacon &&
 			packinfo->source_mac == msfopcode_mac) {
 
-			_ALERT(msfbcomssid_aref, in_pack, packinfo,
+			_ALERT(alert_msfbcomssid_ref, in_pack, packinfo,
 				   "MSF-style poisoned beacon packet for Broadcom drivers detected");
 		}
 
 		if (fc->subtype == packet_sub_beacon &&
 			chunk->length >= 1184) {
 			if (memcmp(&(chunk->data[1180]), "\x6a\x39\x58\x01", 4) == 0)
-				_ALERT(msfnetgearbeacon_aref, in_pack, packinfo,
+				_ALERT(alert_msfnetgearbeacon_ref, in_pack, packinfo,
 					   "MSF-style poisoned options in over-sized beacon for Netgear "
 					   "driver attack");
 		}
@@ -942,14 +1003,18 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 			if (fc->subtype == packet_sub_beacon)
 				packinfo->beacon_interval = kis_letoh16(fixparm->beacon);
 
+			packinfo->ietag_csum = 
+				Adler32Checksum((const char *) (chunk->data + packinfo->header_offset),
+								chunk->length - packinfo->header_offset);
+
             // This is guaranteed to only give us tags that fit within the packets,
             // so we don't have to do more error checking
-            if (GetIEEETagOffsets(packinfo->header_offset, chunk, 
-								  &tag_cache_map) < 0) {
+            if (GetLengthTagOffsets(packinfo->header_offset, chunk, 
+									&tag_cache_map) < 0) {
 				if (srcparms.weak_dissect == 0) {
 					// The frame is corrupt, bail
 					packinfo->corrupt = 1;
-					in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+					in_pack->insert(pack_comp_80211, packinfo);
 					return 0;
 				}
             }
@@ -964,7 +1029,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
                 // Protect against malicious packets
                 if (taglen == 0) {
                     // do nothing for 0-length ssid's
-                } else if (taglen <= PROTO_SSID_LEN) {
+                } else if (taglen <= DOT11_PROTO_SSID_LEN) {
 					// Test the SSID for cloaked len!=0 data==0 situation,
 					// then munge it to something printable if it makes sense
 					// to do so
@@ -985,12 +1050,12 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 						packinfo->ssid_blank = 1;
 					}
                 } else { 
-					_ALERT(longssid_aref, in_pack, packinfo,
+					_ALERT(alert_longssid_ref, in_pack, packinfo,
 						   "Illegal SSID (greater than 32 bytes) detected, this "
 						   "likely indicates an exploit attempt against a client");
                     // Otherwise we're corrupt, set it and stop processing
                     packinfo->corrupt = 1;
-                    in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+                    in_pack->insert(pack_comp_80211, packinfo);
                     return 0;
                 }
             } else {
@@ -1001,7 +1066,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 			if (fc->subtype == packet_sub_probe_resp) {
 				if (found_ssid_tag == 0) {
 					packinfo->corrupt = 1;
-					in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+					in_pack->insert(pack_comp_80211, packinfo);
 					return 0;
 				}
 			}
@@ -1030,7 +1095,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 				if (tag_offset + taglen > chunk->length) {
                     // Otherwise we're corrupt, set it and stop processing
                     packinfo->corrupt = 1;
-                    in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+                    in_pack->insert(pack_comp_80211, packinfo);
                     return 0;
 				}
 
@@ -1040,13 +1105,13 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 					if ((chunk->data[moffset] & 0xFF) == 75 &&
 						memcmp(&(chunk->data[moffset + 1]), "\xEB\x49", 2) == 0) {
 
-						_ALERT(msfdlinkrate_aref, in_pack, packinfo,
+						_ALERT(alert_msfdlinkrate_ref, in_pack, packinfo,
 							   "MSF-style poisoned rate field in beacon for network " +
 							   packinfo->bssid_mac.Mac2String() + ", exploit attempt "
 							   "against D-Link drivers");
 
 						packinfo->corrupt = 1;
-						in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+						in_pack->insert(pack_comp_80211, packinfo);
 						return 0;
 					}
 				}
@@ -1068,7 +1133,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 				if (tag_offset + taglen > chunk->length) {
                     // Otherwise we're corrupt, set it and stop processing
                     packinfo->corrupt = 1;
-                    in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+                    in_pack->insert(pack_comp_80211, packinfo);
                     return 0;
 				}
 
@@ -1170,7 +1235,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 				if (tag_offset + taglen > chunk->length) {
                     // Otherwise we're corrupt, set it and stop processing
                     packinfo->corrupt = 1;
-                    in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+                    in_pack->insert(pack_comp_80211, packinfo);
                     return 0;
 				}
 				
@@ -1305,6 +1370,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 				tag_offset++;
 
 				if (tag_offset + taglen > chunk->length) {
+<<<<<<< HEAD:packetdissectors.cc
 
 					// country tags only valid if 6 bytes or more, ubnt throws
 					// broken ones on some APs
@@ -1324,6 +1390,30 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 
 							packinfo->dot11d_vec.push_back(ri);
 						}
+=======
+					packinfo->corrupt = 1;
+					in_pack->insert(pack_comp_80211, packinfo);
+					return 0;
+				}
+			
+				// country tags only valid if 6 bytes or more, ubnt throws
+				// broken ones on some APs
+				if (taglen > 6) {
+					packinfo->dot11d_country =
+						MungeToPrintable(string((const char *) 
+												&(chunk->data[tag_offset]), 
+												0, 3));
+
+					// We don't have to check taglen since we check that above
+					for (unsigned int p = 3; p + 3 <= taglen; p += 3) {
+						dot11_11d_range_info ri;
+
+						ri.startchan = chunk->data[tag_offset + p];
+						ri.numchan = chunk->data[tag_offset + p + 1];
+						ri.txpower = chunk->data[tag_offset + p + 2];
+
+						packinfo->dot11d_vec.push_back(ri);
+>>>>>>> upstream/master:phy_80211_dissectors.cc
 					}
 				}
 			}
@@ -1341,7 +1431,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 
 						if (tag_orig + taglen > chunk->length) {
 							packinfo->corrupt = 1;
-							in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+							in_pack->insert(pack_comp_80211, packinfo);
 							return 0;
 						}
 
@@ -1383,7 +1473,9 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 						}
 
 						// WPA Migration Mode
-						if ((packinfo->cryptset & crypt_tkip) && ((packinfo->cryptset & crypt_wep40) || (packinfo->cryptset & crypt_wep104)) )
+						if ((packinfo->cryptset & crypt_tkip) && 
+							((packinfo->cryptset & crypt_wep40) || 
+							 (packinfo->cryptset & crypt_wep104)) )
 							packinfo->cryptset |= crypt_wpa_migmode;
 
 						// Match auth key components
@@ -1415,7 +1507,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 
 						if (tag_orig + taglen > chunk->length || taglen < 6) {
 							packinfo->corrupt = 1;
-							in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+							in_pack->insert(pack_comp_80211, packinfo);
 							return 0;
 						}
 
@@ -1427,7 +1519,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 							memcmp(&(chunk->data[tag_orig + offt]), RSN_OUI,
 								   sizeof(RSN_OUI))) {
 							packinfo->corrupt = 1;
-							in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+							in_pack->insert(pack_comp_80211, packinfo);
 							return 0;
 						}
 
@@ -1467,14 +1559,63 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 						packinfo->cryptset |= crypt_version_wpa2;
 					}
 				} /* 48 */
-			}
+			} /* protected frame */
 
+			/* Look for WPS */
+			if ((tcitr = tag_cache_map.find(221)) != tag_cache_map.end()) {
+				for (unsigned int tagct = 0; tagct < tcitr->second.size(); 
+					 tagct++) {
+
+					tag_offset = tcitr->second[tagct];
+					unsigned int tag_orig = tag_offset + 1;
+					unsigned int taglen = (chunk->data[tag_offset] & 0xFF);
+					unsigned int offt = 0;
+
+					// Corrupt tag
+					if (tag_orig + taglen > chunk->length) {
+						packinfo->corrupt = 1;
+						in_pack->insert(pack_comp_80211, packinfo);
+						return 0;
+					}
+
+					if (offt + sizeof(MSF_OUI) > taglen)
+						continue;
+
+					// WPS is always under MSF
+					if (memcmp(&(chunk->data[tag_orig + offt]), 
+							   MSF_OUI, sizeof(MSF_OUI)))
+						continue;
+
+					// OUI + 1 - random byte after OUI in tags
+					offt += sizeof(MSF_OUI) + 1;
+
+					if (offt + sizeof(WPS_VERSION) > taglen)
+						continue;
+
+					if (memcmp(&(chunk->data[tag_orig + offt]),
+							   WPS_VERSION, sizeof(WPS_VERSION)))
+						continue;
+
+					offt += sizeof(WPS_VERSION);
+
+					if (offt + sizeof(WPS_CONFIGURED) > taglen)
+						continue;
+
+					if (memcmp(&(chunk->data[tag_orig + offt]),
+							   WPS_CONFIGURED, sizeof(WPS_CONFIGURED)))
+						continue;
+
+					// printf("debug - got WPS network!\n");
+					packinfo->cryptset |= crypt_wps;
+
+				} /* tagfor */
+			} /* 221/WPS */
 
         } else if (fc->subtype == packet_sub_deauthentication) {
 			if ((packinfo->mgt_reason_code >= 25 && packinfo->mgt_reason_code <= 31) ||
 				packinfo->mgt_reason_code > 45) {
 
-				_ALERT(deauthcodeinvalid_aref, in_pack, packinfo,
+				_ALERT(alert_deauthinvalid_ref, in_pack, packinfo,
 					   "Unknown deauthentication code " +
 					   HexIntToString(packinfo->mgt_reason_code) + 
 					   " from network " + packinfo->bssid_mac.Mac2String());
@@ -1483,7 +1624,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 			if ((packinfo->mgt_reason_code >= 25 && packinfo->mgt_reason_code <= 31) ||
 				packinfo->mgt_reason_code > 45) {
 
-				_ALERT(disconcodeinvalid_aref, in_pack, packinfo,
+				_ALERT(alert_disconinvalid_ref, in_pack, packinfo,
 					   "Unknown disassociation code " +
 					   HexIntToString(packinfo->mgt_reason_code) + 
 					   " from network " + packinfo->bssid_mac.Mac2String());
@@ -1518,6 +1659,7 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
 		} else if (fc->subtype == 8) {
 			// Ugly hack, do this better
 			packinfo->subtype = packet_sub_data_qos_data;
+			// printf("debug - qos data, offset +2, %u to %u\n", packinfo->header_offset, packinfo->header_offset + 2);
 			packinfo->header_offset += 2;
 		} else if (fc->subtype == 9) {
 			// Ugly hack, do this better
@@ -1546,20 +1688,17 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
         } else {
             packinfo->corrupt = 1;
             packinfo->subtype = packet_sub_unknown;
-			in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+			in_pack->insert(pack_comp_80211, packinfo);
             return 0;
         }
-
-        int datasize = chunk->length - packinfo->header_offset;
-        if (datasize > 0)
-            packinfo->datasize = datasize;
 
         // Extract ID's
         switch (packinfo->distrib) {
         case distrib_adhoc:
-            packinfo->dest_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->bssid_mac = addr2;
+
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr2, PHY80211_MAC_LEN);
 
             if (packinfo->bssid_mac.longmac == 0)
                 packinfo->bssid_mac = packinfo->source_mac;
@@ -1567,28 +1706,30 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
             packinfo->header_offset += 24;
             break;
         case distrib_from:
-            packinfo->dest_mac = addr0;
-            packinfo->bssid_mac = addr1;
-            packinfo->source_mac = addr2;
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->bssid_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr2, PHY80211_MAC_LEN);
+
             packinfo->header_offset += 24;
             break;
         case distrib_to:
-            packinfo->bssid_mac = addr0;
-            packinfo->source_mac = addr1;
-            packinfo->dest_mac = addr2;
+            packinfo->bssid_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr1, PHY80211_MAC_LEN);
+            packinfo->dest_mac = mac_addr(addr2, PHY80211_MAC_LEN);
+
             packinfo->header_offset += 24;
             break;
         case distrib_unknown:
             // If we aren't long enough to hold a intra-ds packet, bail
             if (chunk->length < 30) {
                 packinfo->corrupt = 1;
-				in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+				in_pack->insert(pack_comp_80211, packinfo);
                 return 0;
             }
 
-            packinfo->bssid_mac = addr1;
-            packinfo->source_mac = addr3;
-            packinfo->dest_mac = addr0;
+            packinfo->bssid_mac = mac_addr(addr0, PHY80211_MAC_LEN);
+            packinfo->source_mac = mac_addr(addr3, PHY80211_MAC_LEN);
+            packinfo->dest_mac = mac_addr(addr0, PHY80211_MAC_LEN);
 
             packinfo->distrib = distrib_inter;
 
@@ -1597,618 +1738,240 @@ int KisBuiltinDissector::ieee80211_dissector(kis_packet *in_pack) {
             break;
         default:
             packinfo->corrupt = 1;
-			in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
+			in_pack->insert(pack_comp_80211, packinfo);
             return 0;
             break;
         }
-	}
 
-    // Do a little sanity checking on the BSSID
-    if (packinfo->bssid_mac.error == 1 ||
-        packinfo->source_mac.error == 1 ||
-        packinfo->dest_mac.error == 1) {
-        packinfo->corrupt = 1;
-    }
+		// add data addr packet
+		common->source = packinfo->source_mac;
+		common->dest = packinfo->dest_mac;
+		common->device = packinfo->bssid_mac;
+		common->type = packet_basic_data;
 
-	in_pack->insert(_PCM(PACK_COMP_80211), packinfo);
 
-    return 1;
-}
-
-int KisBuiltinDissector::basicdata_dissector(kis_packet *in_pack) {
-	kis_data_packinfo *datainfo = NULL;
-
-	if (in_pack->error)
-		return 0;
-
-	// Grab the 80211 info, compare, bail
-    kis_ieee80211_packinfo *packinfo;
-	if ((packinfo = 
-		 (kis_ieee80211_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211))) == NULL)
-		return 0;
-	if (packinfo->corrupt)
-		return 0;
-	if (packinfo->type != packet_data || 
-		(packinfo->subtype != packet_sub_data &&
-		 packinfo->subtype != packet_sub_data_qos_data))
-		return 0;
-
-	// Grab the mangled frame if we have it, then try to grab up the list of
-	// data types and die if we can't get anything
-	kis_datachunk *chunk = 
-		(kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_MANGLEFRAME));
-
-	if (chunk == NULL) {
-		if ((chunk = 
-			 (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_80211FRAME))) == NULL) {
-			if ((chunk = (kis_datachunk *) 
-				 in_pack->fetch(_PCM(PACK_COMP_LINKFRAME))) == NULL) {
-				return 0;
-			}
-		}
-	}
-
-	// If we don't have a dot11 frame, throw it away
-	if (chunk->dlt != KDLT_IEEE802_11) {
-		// printf("debug - dissector wrong dlt\n");
-		return 0;
-	}
-
-	// Blow up on no content
-    if (packinfo->header_offset > chunk->length) {
-		// printf("debug - offset > len\n");
-        return 0;
-	}
-
-	// If we're not processing data, short circuit the whole packet
-	if (dissect_data == 0) {
-		chunk->length = packinfo->header_offset;
-		return 0;
-	}
-
-	unsigned int header_offset = packinfo->header_offset;
-
-	// If it's wep, get the IVs
-	if (chunk->length > header_offset + 3 &&
-		packinfo->cryptset == crypt_wep) {
-
-		datainfo = new kis_data_packinfo;
-
-		memcpy(datainfo->ivset, &(chunk->data[header_offset]), 3);
-
-		in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-		return 1;
-	}
-
-	// We can't do anything else if it's encrypted
-	if (packinfo->cryptset != 0 && packinfo->decrypted == 0) {
-		// printf("debug - packetdissector crypted packet\n");
-		return 0;
-	}
-
-	datainfo = new kis_data_packinfo;
-
-	if (chunk->length > header_offset + LLC_UI_OFFSET + 
-		sizeof(PROBE_LLC_SIGNATURE) && 
-		memcmp(&(chunk->data[header_offset]), LLC_UI_SIGNATURE,
-			   sizeof(LLC_UI_SIGNATURE)) == 0) {
-		// Handle the batch of frames that fall under the LLC UI 0x3 frame
-		if (memcmp(&(chunk->data[header_offset + LLC_UI_OFFSET]),
-				   PROBE_LLC_SIGNATURE, sizeof(PROBE_LLC_SIGNATURE)) == 0) {
-
-			// Packets that look like netstumber probes...
-			if (header_offset + NETSTUMBLER_OFFSET + 
-				sizeof(NETSTUMBLER_322_SIGNATURE) < chunk->length && 
-				memcmp(&(chunk->data[header_offset + NETSTUMBLER_OFFSET]),
-					   NETSTUMBLER_322_SIGNATURE, 
-					   sizeof(NETSTUMBLER_322_SIGNATURE)) == 0) {
-				_ALERT(netstumbler_aref, in_pack, packinfo,
-					   "Detected Netstumbler 3.22 probe");
-				datainfo->proto = proto_netstumbler_probe;
-				datainfo->field1 = 322;
-				in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-				return 1;
-			}
-
-			if (header_offset + NETSTUMBLER_OFFSET + 
-				sizeof(NETSTUMBLER_323_SIGNATURE) < chunk->length && 
-				memcmp(&(chunk->data[header_offset + NETSTUMBLER_OFFSET]),
-					   NETSTUMBLER_323_SIGNATURE, 
-					   sizeof(NETSTUMBLER_323_SIGNATURE)) == 0) {
-				_ALERT(netstumbler_aref, in_pack, packinfo,
-					   "Detected Netstumbler 3.23 probe");
-				datainfo->proto = proto_netstumbler_probe;
-				datainfo->field1 = 323;
-				in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-				return 1;
-			}
-
-			if (header_offset + NETSTUMBLER_OFFSET + 
-				sizeof(NETSTUMBLER_330_SIGNATURE) < chunk->length && 
-				memcmp(&(chunk->data[header_offset + NETSTUMBLER_OFFSET]),
-					   NETSTUMBLER_330_SIGNATURE, 
-					   sizeof(NETSTUMBLER_330_SIGNATURE)) == 0) {
-				_ALERT(netstumbler_aref, in_pack, packinfo,
-					   "Detected Netstumbler 3.30 probe");
-				datainfo->proto = proto_netstumbler_probe;
-				datainfo->field1 = 330;
-				in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-				return 1;
-			}
-
-			if (header_offset + LUCENT_OFFSET + 
-				sizeof(LUCENT_TEST_SIGNATURE) < chunk->length && 
-				memcmp(&(chunk->data[header_offset + LUCENT_OFFSET]),
-					   LUCENT_TEST_SIGNATURE, 
-					   sizeof(LUCENT_TEST_SIGNATURE)) == 0) {
-				_ALERT(lucenttest_aref, in_pack, packinfo,
-					   "Detected Lucent probe/link test");
-				datainfo->proto = proto_lucent_probe;
-				in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-				return 1;
-			}
-
-			_ALERT(netstumbler_aref, in_pack, packinfo,
-				   "Detected what looks like a Netstumber probe but didn't "
-				   "match known version fingerprint");
-			datainfo->proto = proto_netstumbler_probe;
-			datainfo->field1 = -1;
-
-		} // LLC_SIGNATURE
-
-		// We don't bail right here, if anything looks "more" like something 
-		// else then we'll let it take over
-
-	} // LLC_UI
-
-	// Fortress LLC
-	if ((header_offset + LLC_UI_OFFSET + 1 +
-		 sizeof(FORTRESS_SIGNATURE)) < chunk->length &&
-		memcmp(&(chunk->data[header_offset + LLC_UI_OFFSET]), FORTRESS_SIGNATURE,
-			   sizeof(FORTRESS_SIGNATURE)) == 0) {
-		packinfo->cryptset |= crypt_fortress;
-	}
-
-	// CDP cisco discovery frames, good for finding unauthorized APs
-	// +1 for the version frame we compare first
-	if ((header_offset + LLC_UI_OFFSET + 1 +
-		 sizeof(CISCO_SIGNATURE)) < chunk->length &&
-		memcmp(&(chunk->data[header_offset + LLC_UI_OFFSET]), CISCO_SIGNATURE,
-			   sizeof(CISCO_SIGNATURE)) == 0) {
-		unsigned int offset = 0;
-
-		// Look for frames the old way, maybe v1 used it?  Compare the versions.
-		// I don't remember why the code worked this way.
-		if (chunk->data[header_offset + LLC_UI_OFFSET + 
-			sizeof(CISCO_SIGNATURE)] == 2)
-			offset = header_offset + LLC_UI_OFFSET + sizeof(CISCO_SIGNATURE) + 4;
-		else
-			offset = header_offset + LLC_UI_OFFSET + 12;
-
-		// Did we get useful info?
-		int gotinfo = 0;
-
-		while (offset + CDP_ELEMENT_LEN < chunk->length) {
-		// uint16_t dot1x_length = kis_extract16(&(chunk->data[offset + 2]));
-			uint16_t elemtype = kis_ntoh16(kis_extract16(&(chunk->data[offset + 0])));
-			uint16_t elemlen = kis_ntoh16(kis_extract16(&(chunk->data[offset + 2])));
-
-			if (elemlen == 0)
-				break;
-
-			if (offset + elemlen >= chunk->length)
-				break;
-
-			if (elemtype == 0x01) {
-				// Device id, we care about this
-				if (elemlen < 4) {
-					_MSG("Corrupt CDP frame (possibly an exploit attempt), discarded",
-						 MSGFLAG_ERROR);
-					packinfo->corrupt = 1;
-					delete(datainfo);
-					return 0;
+		// WEP/Protected on data frames means encrypted, not WEP, sometimes
+		if (fc->wep) {
+			bool alt_crypt = false;
+			// Either way to be useful it has to be 2+ bytes, so check tkip
+			// and ccmp at the same time
+			if (packinfo->header_offset + 2 < chunk->length) {
+				if (chunk->data[packinfo->header_offset + 2] == 0) {
+					packinfo->cryptset |= crypt_aes_ccm;
+					alt_crypt = true;
+				}  else if (chunk->data[packinfo->header_offset + 1] & 0x20) {
+					packinfo->cryptset |= crypt_tkip;
+					alt_crypt = true;
 				}
-
-				datainfo->cdp_dev_id = 
-					MungeToPrintable((char *) &(chunk->data[offset + 4]), 
-									 elemlen - 4, 0);
-				gotinfo = 1;
-			} else if (elemtype == 0x03) {
-				if (elemlen < 4) {
-					_MSG("Corrupt CDP frame (possibly an exploit attempt), discarded",
-						 MSGFLAG_ERROR);
-					packinfo->corrupt = 1;
-					delete(datainfo);
-					return 0;
-				}
-
-				datainfo->cdp_port_id = 
-					MungeToPrintable((char *) &(chunk->data[offset + 4]), 
-									 elemlen - 4, 0);
-				gotinfo = 1;
-			}
-
-			offset += elemlen;
-		}
-
-		if (gotinfo) {
-			datainfo->proto = proto_cdp;
-			in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-			return 1;
-		}
-
-	}
-
-	// Dot1x frames
-	// +1 for the version byte at header_offset + hot1x off
-	// +3 for the offset past LLC_UI
-	if ((header_offset + LLC_UI_OFFSET + 4 + 
-		 sizeof(DOT1X_PROTO)) < chunk->length && 
-		memcmp(&(chunk->data[header_offset + LLC_UI_OFFSET + 3]),
-			   DOT1X_PROTO, sizeof(DOT1X_PROTO)) == 0) {
-		// It's dot1x, is it LEAP?
-		//
-		// Make sure its an EAP socket
-		unsigned int offset = header_offset + DOT1X_OFFSET;
-
-		// Dot1x bits
-		uint8_t dot1x_version = chunk->data[offset];
-		uint8_t dot1x_type = chunk->data[offset + 1];
-		// uint16_t dot1x_length = kis_extract16(&(chunk->data[offset + 2]));
-
-		offset += EAP_OFFSET;
-
-		if (dot1x_version != 1 || dot1x_type != 0 || 
-			offset + EAP_PACKET_SIZE >= chunk->length) {
-			delete datainfo;
-			return 0;
-		}
-
-		// Eap bits
-		uint8_t eap_code = chunk->data[offset];
-		// uint8_t eap_id = chunk->data[offset + 1];
-		// uint16_t eap_length = kis_extract16(&(chunk->data[offset + 2]));
-		uint8_t eap_type = chunk->data[offset + 4];
-
-		switch (eap_type) {
-			case EAP_TYPE_LEAP:
-				datainfo->proto = proto_leap;
-				datainfo->field1 = eap_code;
-				packinfo->cryptset |= crypt_leap;
-				break;
-			case EAP_TYPE_TLS:
-				datainfo->proto = proto_tls;
-				datainfo->field1 = eap_code;
-				packinfo->cryptset |= crypt_tls;
-				break;
-			case EAP_TYPE_TTLS:
-				datainfo->proto = proto_ttls;
-				datainfo->field1 = eap_code;
-				packinfo->cryptset |= crypt_ttls;
-				break;
-			case EAP_TYPE_PEAP:
-				datainfo->proto = proto_peap;
-				datainfo->field1 = eap_code;
-				packinfo->cryptset |= crypt_peap;
-				break;
-			default:
-				datainfo->proto = proto_eap_unknown;
-				break;
-		}
-
-		in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-		return 1;
-	}
-
-	if (header_offset + kismax(20, ARP_OFFSET + ARP_PACKET_SIZE) < chunk->length && 
-		header_offset + ARP_OFFSET + sizeof(ARP_SIGNATURE) < chunk->length &&
-		memcmp(&(chunk->data[header_offset + ARP_OFFSET]),
-			   ARP_SIGNATURE, sizeof(ARP_SIGNATURE)) == 0) {
-		// If we look like a ARP frame and we're big enough to be an arp 
-		// frame...
+			}  
 		
-		datainfo->proto = proto_arp;
-		memcpy(&(datainfo->ip_source_addr.s_addr),
-			   &(chunk->data[header_offset + ARP_OFFSET + 16]), 4);
-		in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-		return 1;
-	}
+			if (!alt_crypt)
+				packinfo->cryptset |= crypt_wep;
+		}
 
-	if (header_offset + kismax(UDP_OFFSET + 4, 
-							   IP_OFFSET + 11) < chunk->length && 
-		header_offset + IP_OFFSET + sizeof(TCP_SIGNATURE) < chunk->length &&
-		memcmp(&(chunk->data[header_offset + IP_OFFSET]),
-			   UDP_SIGNATURE, sizeof(UDP_SIGNATURE)) == 0) {
+        int datasize = chunk->length - packinfo->header_offset;
+        if (datasize > 0) {
+            packinfo->datasize = datasize;
+			common->datasize = datasize;
+		}
 
-		// UDP frame...
-		datainfo->ip_source_port = 
-			kis_ntoh16(kis_extract16(&(chunk->data[header_offset + 
-									   UDP_OFFSET])));
-		datainfo->ip_dest_port = 
-			kis_ntoh16(kis_extract16(&(chunk->data[header_offset + 
-									   UDP_OFFSET + 2])));
+		if (packinfo->cryptset == 0 && dissect_data) {
+			// Keep whatever datachunk we already found
+			kis_datachunk *datachunk = 
+				(kis_datachunk *) in_pack->fetch(pack_comp_datapayload);
 
-		memcpy(&(datainfo->ip_source_addr.s_addr),
-			   &(chunk->data[header_offset + IP_OFFSET + 3]), 4);
-		memcpy(&(datainfo->ip_dest_addr.s_addr),
-			   &(chunk->data[header_offset + IP_OFFSET + 7]), 4);
-
-		if (datainfo->ip_source_port == IAPP_PORT &&
-			datainfo->ip_dest_port == IAPP_PORT &&
-			(header_offset + IAPP_OFFSET + 
-			 IAPP_HEADER_SIZE) < chunk->length) {
-
-			uint8_t iapp_version = 
-				chunk->data[header_offset + IAPP_OFFSET];
-			uint8_t iapp_type =
-				chunk->data[header_offset + IAPP_OFFSET + 1];
-
-			// If we can't understand the iapp version, bail and return the
-			// UDP frame we DID decode
-			if (iapp_version != 1) {
-				in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-				return 1;
+			if (datachunk == NULL) {
+				// Don't set a DLT on the data payload, since we don't know what it is
+				// but it's not 802.11.
+				datachunk = new kis_datachunk;
+				datachunk->set_data(chunk->data + packinfo->header_offset,
+									chunk->length - packinfo->header_offset, false);
+				in_pack->insert(pack_comp_datapayload, datachunk);
 			}
 
-			// Same again -- bail on UDP if we can't make sense of this
-			switch (iapp_type) {
-				case iapp_announce_request:
-				case iapp_announce_response:
-				case iapp_handover_request:
-				case iapp_handover_response:
-					break;
-				default:
-					in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-					return 1;
-					break;
+			if (datachunk->length > LLC_UI_OFFSET + sizeof(PROBE_LLC_SIGNATURE) && 
+				memcmp(&(datachunk->data[0]), LLC_UI_SIGNATURE,
+					   sizeof(LLC_UI_SIGNATURE)) == 0) {
+				// Handle the batch of frames that fall under the LLC UI 0x3 frame
+				if (memcmp(&(datachunk->data[LLC_UI_OFFSET]),
+						   PROBE_LLC_SIGNATURE, sizeof(PROBE_LLC_SIGNATURE)) == 0) {
+
+					// Packets that look like netstumber probes...
+					if (NETSTUMBLER_OFFSET + sizeof(NETSTUMBLER_322_SIGNATURE) < 
+						datachunk->length && 
+						memcmp(&(datachunk->data[NETSTUMBLER_OFFSET]),
+							   NETSTUMBLER_322_SIGNATURE, 
+							   sizeof(NETSTUMBLER_322_SIGNATURE)) == 0) {
+						_ALERT(alert_netstumbler_ref, in_pack, packinfo,
+							   "Detected Netstumbler 3.22 probe");
+					}
+
+					if (NETSTUMBLER_OFFSET + sizeof(NETSTUMBLER_323_SIGNATURE) < 
+						datachunk->length && 
+						memcmp(&(datachunk->data[NETSTUMBLER_OFFSET]),
+							   NETSTUMBLER_323_SIGNATURE, 
+							   sizeof(NETSTUMBLER_323_SIGNATURE)) == 0) {
+						_ALERT(alert_netstumbler_ref, in_pack, packinfo,
+							   "Detected Netstumbler 3.23 probe");
+					}
+
+					if (NETSTUMBLER_OFFSET + sizeof(NETSTUMBLER_330_SIGNATURE) < 
+						datachunk->length && 
+						memcmp(&(datachunk->data[NETSTUMBLER_OFFSET]),
+							   NETSTUMBLER_330_SIGNATURE, 
+							   sizeof(NETSTUMBLER_330_SIGNATURE)) == 0) {
+						_ALERT(alert_netstumbler_ref, in_pack, packinfo,
+							   "Detected Netstumbler 3.30 probe");
+					}
+
+					if (LUCENT_OFFSET + sizeof(LUCENT_TEST_SIGNATURE) < 
+						datachunk->length && 
+						memcmp(&(datachunk->data[LUCENT_OFFSET]),
+							   LUCENT_TEST_SIGNATURE, 
+							   sizeof(LUCENT_TEST_SIGNATURE)) == 0) {
+						_ALERT(alert_lucenttest_ref, in_pack, packinfo,
+							   "Detected Lucent probe/link test");
+					}
+
+					_ALERT(alert_netstumbler_ref, in_pack, packinfo,
+						   "Detected what looks like a Netstumber probe but didn't "
+						   "match known version fingerprint");
+				} // LLC_SIGNATURE
+			} // LLC_UI
+
+			// Fortress LLC
+			if ((LLC_UI_OFFSET + 1 + sizeof(FORTRESS_SIGNATURE)) < 
+				datachunk->length && memcmp(&(datachunk->data[LLC_UI_OFFSET]), 
+											FORTRESS_SIGNATURE,
+					   sizeof(FORTRESS_SIGNATURE)) == 0) {
+				packinfo->cryptset |= crypt_fortress;
 			}
 
-			unsigned int pdu_offset = header_offset + IAPP_OFFSET +
-				IAPP_HEADER_SIZE;
+			// Dot1x frames
+			// +1 for the version byte at header_offset + hot1x off
+			// +3 for the offset past LLC_UI
+			if ((LLC_UI_OFFSET + 4 + sizeof(DOT1X_PROTO)) < chunk->length && 
+				memcmp(&(chunk->data[LLC_UI_OFFSET + 3]),
+					   DOT1X_PROTO, sizeof(DOT1X_PROTO)) == 0) {
 
-			while (pdu_offset + IAPP_PDUHEADER_SIZE < chunk->length) {
-				uint8_t *pdu = &(chunk->data[pdu_offset]);
-				uint8_t pdu_type = pdu[0];
-				uint8_t pdu_len = pdu[1];
+				kis_data_packinfo *datainfo = new kis_data_packinfo;
 
-				// If we have a short/malformed PDU frame, bail
-				if ((pdu_offset + 3 + pdu_len) >= chunk->length) {
+				datainfo->proto = proto_eap;
+
+				// printf("debug - dot1x frame?\n");
+				// It's dot1x, is it LEAP?
+				//
+				// Make sure its an EAP socket
+				unsigned int offset = DOT1X_OFFSET;
+
+				// Dot1x bits
+				uint8_t dot1x_version = chunk->data[offset];
+				uint8_t dot1x_type = chunk->data[offset + 1];
+				// uint16_t dot1x_length = kis_extract16(&(chunk->data[offset + 2]));
+
+				offset += EAP_OFFSET;
+
+				if (dot1x_version != 1 || dot1x_type != 0 || 
+					offset + EAP_PACKET_SIZE > chunk->length) {
 					delete datainfo;
-					return 0;
+					goto eap_end;
 				}
 
-				switch (pdu_type) {
-					case iapp_pdu_ssid:
-						if (pdu_len > SSID_SIZE)
-							break;
+				// Eap bits
+				uint8_t eap_code = chunk->data[offset];
+				// uint8_t eap_id = chunk->data[offset + 1];
+				uint16_t eap_length = kis_extractBE16(&(chunk->data[offset + 2]));
+				uint8_t eap_type = chunk->data[offset + 4];
 
-						packinfo->ssid = 
-							MungeToPrintable((char *) &(pdu[3]), pdu_len, 0);
-						break;
-					case iapp_pdu_bssid:
-						if (pdu_len != MAC_LEN)
-							break;
+				unsigned int rawlen;
+				char *rawid;
 
-						packinfo->bssid_mac = mac_addr(&(pdu[3]));
+				if (offset + eap_length > chunk->length) {
+					delete datainfo;
+					goto eap_end;
+				}
+
+				packinfo->cryptset |= crypt_eap;
+				switch (eap_type) {
+					case EAP_TYPE_LEAP:
+						datainfo->field1 = eap_code;
+						packinfo->cryptset |= crypt_leap;
 						break;
-					case iapp_pdu_capability:
-						if (pdu_len != 1)
-							break;
-						if ((pdu[3] & iapp_cap_wep))
-							packinfo->cryptset |= crypt_wep;
+					case EAP_TYPE_TLS:
+						datainfo->field1 = eap_code;
+						packinfo->cryptset |= crypt_tls;
 						break;
-					case iapp_pdu_channel:
-						if (pdu_len != 1)
-							break;
-						packinfo->channel = (int) pdu[3];
+					case EAP_TYPE_TTLS:
+						datainfo->field1 = eap_code;
+						packinfo->cryptset |= crypt_ttls;
 						break;
-					case iapp_pdu_beaconint:
-						if (pdu_len != 2)
-							break;
-						packinfo->beacon_interval = (int) ((pdu[3] << 8) | pdu[4]);
+					case EAP_TYPE_PEAP:
+						// printf("debug - peap!\n");
+						datainfo->field1 = eap_code;
+						packinfo->cryptset |= crypt_peap;
 						break;
-					case iapp_pdu_oldbssid:
-					case iapp_pdu_msaddr:
-					case iapp_pdu_announceint:
-					case iapp_pdu_hotimeout:
-					case iapp_pdu_messageid:
-					case iapp_pdu_phytype:
-					case iapp_pdu_regdomain:
-					case iapp_pdu_ouiident:
-					case iapp_pdu_authinfo:
+					case EAP_TYPE_IDENTITY:
+						if (eap_code == EAP_CODE_RESPONSE) {
+
+							rawlen = eap_length - 5;
+							rawid = new char[rawlen + 1];
+							memcpy(rawid, &(chunk->data[offset + 5]), rawlen);
+							rawid[rawlen] = 0;
+
+							datainfo->auxstring = MungeToPrintable(rawid, rawlen, 1);
+							delete[] rawid;
+						}
+
+						break;
 					default:
 						break;
 				}
-				pdu_offset += pdu_len + 3;
+
+				in_pack->insert(pack_comp_basicdata, datainfo);
 			}
 
-			datainfo->proto = proto_iapp;
-			in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-			return 1;
-		} // IAPP port
-
-		if ((datainfo->ip_source_port == ISAKMP_PORT ||
-			 datainfo->ip_dest_port == ISAKMP_PORT) &&
-			(header_offset + ISAKMP_OFFSET + 
-			 ISAKMP_PACKET_SIZE) < chunk->length) {
-			
-			datainfo->proto = proto_isakmp;
-			datainfo->field1 = 
-				chunk->data[header_offset + ISAKMP_OFFSET + 4];
-
-			packinfo->cryptset |= crypt_isakmp;
-			
-			in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-			return 1;
+eap_end:
+			;
 
 		}
+	}
 
-		/* DHCP Offer */
-		if (packinfo->dest_mac == broadcast_mac &&
-			datainfo->ip_source_port == 67 &&
-			datainfo->ip_dest_port == 68) {
+	// Do a little sanity checking on the BSSID
+	if (packinfo->bssid_mac.error == 1 ||
+		packinfo->source_mac.error == 1 ||
+		packinfo->dest_mac.error == 1) {
+		packinfo->corrupt = 1;
+	}
 
-			// Extract the DHCP tags the same way we get IEEE 80211 tags,
-			// infact we can re-use the code
-			map<int, vector<int> > dhcp_tag_map;
-
-			// This is convenient since it won't return anything that is outside
-			// the context of the packet, we can feed it the length w/out checking 
-			// and we can trust the tags
-			GetIEEETagOffsets(header_offset + DHCPD_OFFSET + 252,
-							  chunk, &dhcp_tag_map);
-
-			if (dhcp_tag_map.find(53) != dhcp_tag_map.end() &&
-				dhcp_tag_map[53].size() != 0 &&
-				chunk->data[dhcp_tag_map[53][0] + 1] == 0x02) {
-
-				// We're a DHCP offer...
-				datainfo->proto = proto_dhcp_offer;
-
-				// This should never be possible, but let's check
-				if ((header_offset + DHCPD_OFFSET + 32) >= chunk->length) {
-					delete datainfo;
-					return 0;
-				}
-
-				memcpy(&(datainfo->ip_dest_addr.s_addr), 
-					   &(chunk->data[header_offset + DHCPD_OFFSET + 28]), 4);
-
-				if (dhcp_tag_map.find(1) != dhcp_tag_map.end() &&
-					dhcp_tag_map[1].size() != 0) {
-
-					memcpy(&(datainfo->ip_netmask_addr.s_addr), 
-						   &(chunk->data[dhcp_tag_map[1][0] + 1]), 4);
-				}
-
-				if (dhcp_tag_map.find(3) != dhcp_tag_map.end() &&
-					dhcp_tag_map[3].size() != 0) {
-
-					memcpy(&(datainfo->ip_gateway_addr.s_addr), 
-						   &(chunk->data[dhcp_tag_map[3][0] + 1]), 4);
-				}
-			}
-		}
-
-		/* DHCP Discover */
-		if (packinfo->dest_mac == broadcast_mac &&
-			datainfo->ip_source_port == 68 &&
-			datainfo->ip_dest_port == 67) {
-
-			// Extract the DHCP tags the same way we get IEEE 80211 tags,
-			// infact we can re-use the code
-			map<int, vector<int> > dhcp_tag_map;
-
-			// This is convenient since it won't return anything that is outside
-			// the context of the packet, we can feed it the length w/out checking 
-			// and we can trust the tags
-			GetIEEETagOffsets(header_offset + DHCPD_OFFSET + 252,
-							  chunk, &dhcp_tag_map);
-
-			if (dhcp_tag_map.find(53) != dhcp_tag_map.end() &&
-				dhcp_tag_map[53].size() != 0 &&
-				chunk->data[dhcp_tag_map[53][0] + 1] == 0x01) {
-
-				// We're definitely a dhcp discover
-				datainfo->proto = proto_dhcp_discover;
-
-				if (dhcp_tag_map.find(12) != dhcp_tag_map.end() &&
-					dhcp_tag_map[12].size() != 0) {
-
-					datainfo->discover_host = 
-						string((char *) &(chunk->data[dhcp_tag_map[12][0] + 1]), 
-							   chunk->data[dhcp_tag_map[12][0]]);
-
-					datainfo->discover_host = MungeToPrintable(datainfo->discover_host);
-				}
-
-				if (dhcp_tag_map.find(60) != dhcp_tag_map.end() &&
-					dhcp_tag_map[60].size() != 0) {
-
-					datainfo->discover_vendor = 
-						string((char *) &(chunk->data[dhcp_tag_map[60][0] + 1]), 
-							   chunk->data[dhcp_tag_map[60][0]]);
-					datainfo->discover_vendor = 
-						MungeToPrintable(datainfo->discover_vendor);
-				}
-
-				if (dhcp_tag_map.find(61) != dhcp_tag_map.end() &&
-					dhcp_tag_map[61].size() == 7) {
-					mac_addr clmac = mac_addr(&(chunk->data[dhcp_tag_map[61][0] + 2]));
-
-					if (clmac != packinfo->source_mac) {
-						_ALERT(dhcp_clientid_aref, in_pack, packinfo, 
-							   string("DHCP request on network ") + 
-							   packinfo->bssid_mac.Mac2String() + string(" from ") +
-							   packinfo->source_mac.Mac2String() + 
-							   string(" doesn't match DHCP DISCOVER client id ") +
-							   clmac.Mac2String() + string(" which can indicate "
-								"a DHCP spoofing attack"));
-					}
-				}
-			}
-		}
-
-		in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-		return 1;
-
-	} // UDP frame
-
-	if (header_offset + kismax(TCP_OFFSET + 4, 
-							   IP_OFFSET + TCP_HEADER_SIZE) < chunk->length && 
-		header_offset + IP_OFFSET + sizeof(TCP_SIGNATURE) < chunk->length &&
-		memcmp(&(chunk->data[header_offset + IP_OFFSET]),
-			   TCP_SIGNATURE, sizeof(TCP_SIGNATURE)) == 0) {
-
-		// TCP frame...
-		datainfo->ip_source_port = 
-			kis_ntoh16(kis_extract16(&(chunk->data[header_offset + 
-									   TCP_OFFSET])));
-		datainfo->ip_dest_port = 
-			kis_ntoh16(kis_extract16(&(chunk->data[header_offset + 
-									   TCP_OFFSET + 2])));
-
-		memcpy(&(datainfo->ip_source_addr.s_addr),
-			   &(chunk->data[header_offset + IP_OFFSET + 3]), 4);
-		memcpy(&(datainfo->ip_dest_addr.s_addr),
-			   &(chunk->data[header_offset + IP_OFFSET + 7]), 4);
-
-		datainfo->proto = proto_tcp;
-
-		if (datainfo->ip_source_port == PPTP_PORT || 
-			datainfo->ip_dest_port == PPTP_PORT) {
-			datainfo->proto = proto_pptp;
-			packinfo->cryptset |= crypt_pptp;
-		}
-
-		in_pack->insert(_PCM(PACK_COMP_BASICDATA), datainfo);
-		return 1;
-	} // TCP frame
-
-	// Trash the data if we didn't fill it in
-	delete(datainfo);
+	in_pack->insert(pack_comp_80211, packinfo);
 
 	return 1;
 }
 
-kis_datachunk *KisBuiltinDissector::DecryptWEP(kis_ieee80211_packinfo *in_packinfo,
+kis_datachunk *Kis_80211_Phy::DecryptWEP(dot11_packinfo *in_packinfo,
 											   kis_datachunk *in_chunk,
 											   unsigned char *in_key, int in_key_len,
 											   unsigned char *in_id) {
 	kis_datachunk *manglechunk = NULL;
 
+	// printf("debug - decryptwep\n");
 	if (in_packinfo->corrupt)
 		return NULL;
 
+	// printf("debug - decryptwep dlt %u want %u\n", in_chunk->dlt, KDLT_IEEE802_11);
 	// If we don't have a dot11 frame, throw it away
 	if (in_chunk->dlt != KDLT_IEEE802_11)
 		return NULL;
 
+	// printf("debug - decryptwep size len %u offt %u\n", in_chunk->length, in_packinfo->header_offset);
 	// Bail on size check
 	if (in_chunk->length < in_packinfo->header_offset ||
 		in_chunk->length - in_packinfo->header_offset <= 8)
 		return NULL;
 
+	// printf("debug - decryptwep data header offt %u test head %02x %02x %02x %02x offt %02x %02x %02x %02x\n", in_packinfo->header_offset, in_chunk->data[0], in_chunk->data[1], in_chunk->data[2], in_chunk->data[3], in_chunk->data[in_packinfo->header_offset], in_chunk->data[in_packinfo->header_offset+1], in_chunk->data[in_packinfo->header_offset+2], in_chunk->data[in_packinfo->header_offset+3]);
+
+	// printf("debug - password\n");
 	// Password field
 	char pwd[WEPKEY_MAX + 3];
 	memset(pwd, 0, WEPKEY_MAX + 3);
@@ -2221,6 +1984,8 @@ kis_datachunk *KisBuiltinDissector::DecryptWEP(kis_ieee80211_packinfo *in_packin
 	// Add the supplied password to the key
 	memcpy(pwd + 3, in_key, WEPKEY_MAX);
 	int pwdlen = 3 + in_key_len;
+
+	// printf("debug - wep stuff\n");
 
 	// Prepare the keyblock for the rc4 cipher
 	unsigned char keyblock[256];
@@ -2235,12 +2000,18 @@ kis_datachunk *KisBuiltinDissector::DecryptWEP(kis_ieee80211_packinfo *in_packin
 
 	// Allocate the mangled chunk -- 4 byte IV/Key# gone, 4 byte ICV gone
 	manglechunk = new kis_datachunk;
-	manglechunk->dlt = in_chunk->dlt;
+	manglechunk->dlt = KDLT_IEEE802_11;
+
+#if 0
 	manglechunk->length = in_chunk->length - 8;
 	manglechunk->data = new uint8_t[manglechunk->length];
 
 	// Copy the packet headers to the new chunk
 	memcpy(manglechunk->data, in_chunk->data, in_packinfo->header_offset);
+#endif
+	
+	// Copy because we're modifying
+	manglechunk->set_data(in_chunk->data, in_chunk->length - 8, true);
 
 	// Decrypt the data payload and check the CRC
 	kba = kbb = 0;
@@ -2250,6 +2021,7 @@ kis_datachunk *KisBuiltinDissector::DecryptWEP(kis_ieee80211_packinfo *in_packin
 
 	// Copy the ICV into the CRC buffer for checking
 	memcpy(icv, &(in_chunk->data[in_chunk->length - 4]), 4);
+	// printf("debug - icv %02x %02x %02x %02x\n", icv[0], icv[1], icv[2], icv[3]);
 
 	for (unsigned int dpos = in_packinfo->header_offset + 4; 
 		 dpos < in_chunk->length - 4; dpos++) {
@@ -2264,7 +2036,7 @@ kis_datachunk *KisBuiltinDissector::DecryptWEP(kis_ieee80211_packinfo *in_packin
 		manglechunk->data[dpos - 4] = 
 			in_chunk->data[dpos] ^ keyblock[(keyblock[kba] + keyblock[kbb]) & 0xFF];
 
-		crc = wep_crc32_table[(crc ^ manglechunk->data[dpos - 4]) & 0xFF] ^ (crc >> 8);
+		crc = dot11_wep_crc32_table[(crc ^ manglechunk->data[dpos - 4]) & 0xFF] ^ (crc >> 8);
 	}
 
 	// Check the CRC
@@ -2303,16 +2075,16 @@ kis_datachunk *KisBuiltinDissector::DecryptWEP(kis_ieee80211_packinfo *in_packin
 	return manglechunk;
 }
 
-int KisBuiltinDissector::wep_data_decryptor(kis_packet *in_pack) {
+int Kis_80211_Phy::PacketWepDecryptor(kis_packet *in_pack) {
 	kis_datachunk *manglechunk = NULL;
 
 	if (in_pack->error)
 		return 0;
 
 	// Grab the 80211 info, compare, bail
-    kis_ieee80211_packinfo *packinfo;
+    dot11_packinfo *packinfo;
 	if ((packinfo = 
-		 (kis_ieee80211_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211))) == NULL)
+		 (dot11_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211))) == NULL)
 		return 0;
 	if (packinfo->corrupt)
 		return 0;
@@ -2327,11 +2099,11 @@ int KisBuiltinDissector::wep_data_decryptor(kis_packet *in_pack) {
 
 	// Grab the 80211 frame, if that doesn't exist, grab the link frame
 	kis_datachunk *chunk = 
-		(kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_80211FRAME));
+		(kis_datachunk *) in_pack->fetch(pack_comp_decap);
 
 	if (chunk == NULL) {
 		if ((chunk = 
-			 (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_LINKFRAME))) == NULL) {
+			 (kis_datachunk *) in_pack->fetch(pack_comp_linkframe)) == NULL) {
 			return 0;
 		}
 	}
@@ -2341,7 +2113,7 @@ int KisBuiltinDissector::wep_data_decryptor(kis_packet *in_pack) {
 		return 0;
 
 	// Bail if we can't find a key match
-	macmap<wep_key_info *>::iterator bwmitr = wepkeys.find(packinfo->bssid_mac);
+	macmap<dot11_wep_key *>::iterator bwmitr = wepkeys.find(packinfo->bssid_mac);
 	if (bwmitr == wepkeys.end())
 		return 0;
 
@@ -2357,10 +2129,269 @@ int KisBuiltinDissector::wep_data_decryptor(kis_packet *in_pack) {
 	// printf("debug - flagging packet as decrypted\n");
 	packinfo->decrypted = 1;
 
-	in_pack->insert(_PCM(PACK_COMP_MANGLEFRAME), manglechunk);
+	in_pack->insert(pack_comp_mangleframe, manglechunk);
+
+	kis_datachunk *datachunk = 
+		(kis_datachunk *) in_pack->fetch(pack_comp_datapayload);
+
+	in_pack->insert(pack_comp_datapayload, NULL);
+
+	if (datachunk != NULL)
+		delete datachunk;
+
+	if (manglechunk->length > packinfo->header_offset) {
+		datachunk = new kis_datachunk;
+
+		datachunk->set_data(manglechunk->data + packinfo->header_offset,
+							manglechunk->length - packinfo->header_offset,
+							false);
+	}
+
 	return 1;
 }
 
+#if 0
+int Kis_80211_Phy::PacketDot11stringDissector(kis_packet *in_pack) {
+	if (dissect_strings == 0)
+		return 0;
+
+	kis_string_info *stringinfo = NULL;
+	vector<string> parsed_strings;
+
+	if (in_pack->error)
+		return 0;
+
+	// Grab the 80211 info, compare, bail
+    dot11_packinfo *packinfo;
+	if ((packinfo = 
+		 (dot11_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211))) == NULL)
+		return 0;
+	if (packinfo->corrupt)
+		return 0;
+	if (packinfo->type != packet_data || 
+		(packinfo->subtype != packet_sub_data &&
+		 packinfo->subtype != packet_sub_data_qos_data))
+		return 0;
+
+	// If it's encrypted and hasn't been decrypted, we can't do anything
+	// smart with it, so toss.
+	if (packinfo->cryptset != 0 && packinfo->decrypted == 0)
+		return 0;
+
+	if (dissect_all_strings == 0 && dissect_strings) {
+		if (string_nets.find(packinfo->bssid_mac) == string_nets.end() &&
+			string_nets.find(packinfo->source_mac) == string_nets.end() &&
+			string_nets.find(packinfo->dest_mac) == string_nets.end()) {
+			return 0;
+		}
+	}
+	
+	// Grab the mangled frame if we have it, then try to grab up the list of
+	// data types and die if we can't get anything
+	kis_datachunk *chunk = 
+		(kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_MANGLEFRAME));
+
+	if (chunk == NULL) {
+		if ((chunk = 
+			 (kis_datachunk *) in_pack->fetch(pack_comp_decap)) == NULL) {
+			if ((chunk = (kis_datachunk *) 
+				 in_pack->fetch(pack_comp_linkframe)) == NULL) {
+				return 0;
+			}
+		}
+	}
+
+	// If we don't have a dot11 frame, throw it away
+	if (chunk->dlt != KDLT_IEEE802_11)
+		return 0;
+
+	// Blow up on no content
+    if (packinfo->header_offset > chunk->length)
+        return 0;
+
+	string str;
+	int pos = 0;
+	int printable = 0;
+	for (unsigned int x = packinfo->header_offset; x < chunk->length; x++) {
+		if (printable && !isprint(chunk->data[x]) && pos != 0) {
+			if (pos > 4 && 
+				string_filter->RunFilter(packinfo->bssid_mac, packinfo->source_mac,
+										 packinfo->dest_mac) == 0 &&
+				string_filter->RunPcreFilter(str) == 0) {
+				str = MungeToPrintable(str);
+
+				// Cache it in the packet
+				parsed_strings.push_back(str);
+			}
+
+			str = "";
+			pos = 0;
+			printable = 0;
+		} else if (isprint(chunk->data[x])) {
+			str += (char) chunk->data[x];
+			pos++;
+			printable = 1;
+		}
+	}
+
+	if (parsed_strings.size() <= 0)
+		return 0;
+
+	stringinfo =
+		(kis_string_info *) in_pack->fetch(_PCM(PACK_COMP_STRINGS));
+
+	if (stringinfo == NULL) {
+		stringinfo = new kis_string_info;
+		in_pack->insert(_PCM(PACK_COMP_STRINGS), stringinfo);
+	}
+
+	stringinfo->extracted_strings = parsed_strings;
+
+	return 1;
+}
+#endif
+
+int Kis_80211_Phy::PacketDot11WPSM3(kis_packet *in_pack) {
+	if (in_pack->error)
+		return 0;
+
+	// Grab the 80211 info, compare, bail
+    dot11_packinfo *packinfo;
+	if ((packinfo = 
+		 (dot11_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211))) == NULL)
+		return 0;
+	if (packinfo->corrupt)
+		return 0;
+	if (packinfo->type != packet_data || 
+		(packinfo->subtype != packet_sub_data &&
+		 packinfo->subtype != packet_sub_data_qos_data))
+		return 0;
+
+	// If it's encrypted it's not eapol
+	if (packinfo->cryptset)
+		return 0;
+
+	// Grab the 80211 frame, if that doesn't exist, grab the link frame
+	kis_datachunk *chunk = 
+		(kis_datachunk *) in_pack->fetch(pack_comp_decap);
+
+	if (chunk == NULL) {
+		if ((chunk = 
+			 (kis_datachunk *) in_pack->fetch(pack_comp_linkframe)) == NULL) {
+			return 0;
+		}
+	}
+
+	// If we don't have a dot11 frame, throw it away
+	if (chunk->dlt != KDLT_IEEE802_11)
+		return 0;
+
+    if (packinfo->header_offset >= chunk->length)
+        return 0;
+
+	unsigned int pos = packinfo->header_offset;
+
+	uint8_t eapol_llc[] = { 0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8e };
+	uint8_t dot1x_v1_hdr[] = { 0x01, 0x00 };
+	uint8_t eapreq = 0x01;
+	uint8_t eaptype_et = 0xfe;
+	uint8_t wfawps[] = { 0x00, 0x37, 0x2a, 0x00, 0x00, 0x00, 0x01, 0x04 };
+	uint8_t wfa_msg[] = { 0x10, 0x22 };
+	uint8_t wfa_m3 = 0x07;
+
+	if (pos + sizeof(eapol_llc) >= chunk->length)
+		return 0;
+
+	if (memcmp(&(chunk->data[pos]), eapol_llc, sizeof(eapol_llc)))
+		return 0;
+
+	// printf("debug - potential eapol frame, matched llc\n");
+
+	pos += sizeof(eapol_llc);
+
+	if (pos + sizeof(dot1x_v1_hdr) >= chunk->length)
+		return 0;
+
+	if (memcmp(&(chunk->data[pos]), dot1x_v1_hdr, sizeof(dot1x_v1_hdr)))
+		return 0;
+
+	pos += sizeof(dot1x_v1_hdr);
+
+	// 2 bytes of length, ignore, check before next compare
+	pos += 2;
+
+	// Check that it's a request
+	if (pos + 1 >= chunk->length)
+		return 0;
+
+	// printf("debug - eapreq inspecting %x %x %x\n", chunk->data[pos - 1], chunk->data[pos], chunk->data[pos + 1]);
+
+	if (chunk->data[pos] != eapreq)
+		return 0;
+
+	// printf("debug - eap request\n");
+
+	// don't care for id or length
+	pos += 4;
+
+	if (pos + 1 >= chunk->length)
+		return 0;
+
+	// printf("debug - et %x\n", chunk->data[pos]);
+
+	// Compare expanded type
+	if (chunk->data[pos] != eaptype_et)
+		return 0;
+
+	pos += 1;
+
+	// printf("debug - got past eaptype hdr\n");
+
+	if (pos + sizeof(wfawps) >= chunk->length)
+		return 0;
+
+	if (memcmp(&(chunk->data[pos]), wfawps, sizeof(wfawps)))
+		return 0;
+
+	pos += sizeof(wfawps);
+
+	// printf("debug - got wfawps eapol content\n");
+
+	// Don't care about flags
+	pos += 1;
+
+	while (pos + 5 < chunk->length) {
+		uint16_t tlen;
+		memcpy(&tlen, &(chunk->data[pos + 2]), 2);
+		tlen = kis_betoh16(tlen);
+
+		if (memcmp(&(chunk->data[pos]), wfa_msg, sizeof(wfa_msg))) {
+			// printf("debug - skipping tag %x%x %u long\n", chunk->data[pos], chunk->data[pos + 1], tlen);
+			pos += 4 + tlen;
+			continue;
+		}
+
+		if (tlen != 1) {
+			// printf("debug - weird eapol wfa len?\n");
+			pos += 4 + tlen;
+		}
+
+		pos += 4;
+
+		if (chunk->data[pos] == wfa_m3) {
+			// printf("debug - saw WPA M3 frame\n");
+			return 1;
+		}
+
+		pos += tlen;
+	}
+
+
+	return 0;
+}
+
+
+#if 0
 void KisBuiltinDissector::AddWepKey(mac_addr bssid, uint8_t *key, unsigned int len, 
 									int temp) {
 	if (len > WEPKEY_MAX)
@@ -2476,125 +2507,6 @@ int KisBuiltinDissector::cmd_delwepkey(CLIENT_PARMS) {
     return 1;
 }
 
-int KisBuiltinDissector::basicstring_dissector(kis_packet *in_pack) {
-	if (dissect_strings == 0)
-		return 0;
-
-	kis_string_info *stringinfo = NULL;
-	vector<string> parsed_strings;
-
-	if (in_pack->error)
-		return 0;
-
-	// Grab the 80211 info, compare, bail
-    kis_ieee80211_packinfo *packinfo;
-	if ((packinfo = 
-		 (kis_ieee80211_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211))) == NULL)
-		return 0;
-	if (packinfo->corrupt)
-		return 0;
-	if (packinfo->type != packet_data || 
-		(packinfo->subtype != packet_sub_data &&
-		 packinfo->subtype != packet_sub_data_qos_data))
-		return 0;
-
-	// If it's encrypted and hasn't been decrypted, we can't do anything
-	// smart with it, so toss.
-	if (packinfo->cryptset != 0 && packinfo->decrypted == 0)
-		return 0;
-
-	if (dissect_all_strings == 0 && dissect_strings) {
-		if (string_nets.find(packinfo->bssid_mac) == string_nets.end() &&
-			string_nets.find(packinfo->source_mac) == string_nets.end() &&
-			string_nets.find(packinfo->dest_mac) == string_nets.end()) {
-			return 0;
-		}
-	}
-	
-	// Grab the mangled frame if we have it, then try to grab up the list of
-	// data types and die if we can't get anything
-	kis_datachunk *chunk = 
-		(kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_MANGLEFRAME));
-
-	if (chunk == NULL) {
-		if ((chunk = 
-			 (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_80211FRAME))) == NULL) {
-			if ((chunk = (kis_datachunk *) 
-				 in_pack->fetch(_PCM(PACK_COMP_LINKFRAME))) == NULL) {
-				return 0;
-			}
-		}
-	}
-
-	// If we don't have a dot11 frame, throw it away
-	if (chunk->dlt != KDLT_IEEE802_11)
-		return 0;
-
-	// Blow up on no content
-    if (packinfo->header_offset > chunk->length)
-        return 0;
-
-	string str;
-	int pos = 0;
-	int printable = 0;
-	for (unsigned int x = packinfo->header_offset; x < chunk->length; x++) {
-		if (printable && !isprint(chunk->data[x]) && pos != 0) {
-			if (pos > 4 && 
-				string_filter->RunFilter(packinfo->bssid_mac, packinfo->source_mac,
-										 packinfo->dest_mac) == 0 &&
-				string_filter->RunPcreFilter(str) == 0) {
-				str = MungeToPrintable(str);
-				// Send it to the clients
-				string_proto_info nfo;
-				nfo.text = str;
-				nfo.bssid = packinfo->bssid_mac;
-				nfo.source = packinfo->source_mac;
-				nfo.dest = packinfo->dest_mac;
-				globalreg->kisnetserver->SendToAll(_NPM(PROTO_REF_STRING),
-												   (void *) &nfo);
-
-				// Cache it in the packet
-				parsed_strings.push_back(str);
-			}
-
-			str = "";
-			pos = 0;
-			printable = 0;
-		} else if (isprint(chunk->data[x])) {
-			str += (char) chunk->data[x];
-			pos++;
-			printable = 1;
-		}
-	}
-
-	if (parsed_strings.size() <= 0)
-		return 0;
-
-	stringinfo =
-		(kis_string_info *) in_pack->fetch(_PCM(PACK_COMP_STRINGS));
-
-	if (stringinfo == NULL) {
-		stringinfo = new kis_string_info;
-		in_pack->insert(_PCM(PACK_COMP_STRINGS), stringinfo);
-	}
-
-	stringinfo->extracted_strings = parsed_strings;
-
-	return 1;
-}
-
-void KisBuiltinDissector::SetStringExtract(int in_extr) {
-	if (in_extr == 0 && dissect_strings == 2) {
-		_MSG("SetStringExtract(): String dissection cannot be disabled because "
-			 "it is required by another active component.", MSGFLAG_ERROR);
-		return;
-	}
-
-	// If we're setting the extract here, we have to turn it on for all BSSIDs
-	dissect_strings = in_extr;
-	dissect_all_strings = in_extr;
-}
-
 int KisBuiltinDissector::cmd_strings(CLIENT_PARMS) {
 	// FIXME: write this
     if (parsedcmdline->size() < 1) {
@@ -2667,4 +2579,5 @@ int KisBuiltinDissector::cmd_stringsfilter(CLIENT_PARMS) {
 
 	return 1;
 }
+#endif
 

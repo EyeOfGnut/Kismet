@@ -104,7 +104,10 @@ class Dumpfile_Pcap;
 #define PACK_COMP_STRINGS		12
 #define PACK_COMP_FCSBYTES		13
 #define PACK_COMP_DEVICE		14
-#define PACK_COMP_MAX			15
+#define PACK_COMP_COMMON		15
+#define PACK_COMP_CHECKSUM		16
+#define PACK_COMP_DECAP			17
+#define PACK_COMP_MAX			18
 
 // Same game again, with alerts that internal things need to generate
 #define ALERT_REF_KISMET		0
@@ -112,12 +115,18 @@ class Dumpfile_Pcap;
 
 // Define some macros (ew) to shortcut into the vectors we had to build for
 // fast access.  Kids, don't try this at home.
+
+// DEPRECATED... Trying to switch to each component registering by name
+// and finding related component by name.  Try to avoid using _PCM etc
+// in future code
 #define _PCM(x)		globalreg->packetcomp_map[(x)]
 #define _NPM(x)		globalreg->netproto_map[(x)]
 #define _ARM(x)		globalreg->alertref_map[(x)]
 #define _ALERT(x, y, z, a)	globalreg->alertracker->RaiseAlert((x), (y), \
 	(z)->bssid_mac, (z)->source_mac, (z)->dest_mac, (z)->other_mac, \
 	(z)->channel, (a))
+#define _COMMONALERT(t, p, c, a)  globalreg->alertracker->RaiseAlert((t), (p), \
+	(c)->device, (c)->source, (c)->dest, mac_addr(0), (c)->channel, (a))
 
 // Send a msg via gloablreg msgbus
 #define _MSG(x, y)	globalreg->messagebus->InjectMessage((x), (y))
@@ -195,6 +204,9 @@ public:
 	string revision;
 	string revdate;
 
+	// Map of named file pipes that sub-components should use
+	map<string, int> namedfd_map;
+
 	// Vector of pollable subservices for main()...  You should use the util 
 	// functions for this, but main needs to be able to see it directly
 	vector<Pollable *> subsys_pollable_vec;
@@ -208,6 +220,10 @@ public:
     time_t start_time;
     string servername;
 	struct timeval timestamp;
+
+	string homepath;
+
+	string logname;
 
     unsigned int metric;
 
@@ -236,7 +252,7 @@ public:
     int filter_export_bssid_invert, filter_export_source_invert,
         filter_export_dest_invert;
    
-    mac_addr broadcast_mac;
+    mac_addr broadcast_mac, empty_mac;
 
     int alert_backlog;
 
@@ -281,6 +297,13 @@ public:
 	// whatever other conditions we use)
 	int checksum_packets;
 
+<<<<<<< HEAD
+=======
+	// Add & retreive a named FD
+	void AddNamedFd(string name, int fd);
+	int GetNamedFd(string name);
+
+>>>>>>> upstream/master
 protected:
     // Exernal global references, string to intid
     map<string, int> ext_name_map;
@@ -291,3 +314,4 @@ protected:
 
 #endif
 
+// vim: ts=4:sw=4

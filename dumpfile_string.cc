@@ -19,6 +19,7 @@
 #include "config.h"
 
 #include "dumpfile_string.h"
+#include "phy_80211.h"
 
 int dumpfilestring_chain_hook(CHAINCALL_PARMS) {
 	Dumpfile_String *auxptr = (Dumpfile_String *) auxdata;
@@ -39,6 +40,7 @@ Dumpfile_String::Dumpfile_String(GlobalRegistry *in_globalreg) :
 	stringfile = NULL;
 
 	type = "string";
+	logclass = "string";
 
 	if (globalreg->sourcetracker == NULL) {
 		fprintf(stderr, "FATAL OOPS:  Sourcetracker missing before "
@@ -46,14 +48,16 @@ Dumpfile_String::Dumpfile_String(GlobalRegistry *in_globalreg) :
 		exit(1);
 	}
 
+#if 0
 	if (globalreg->builtindissector == NULL) {
 		fprintf(stderr, "FATAL OOPS:  Sourcetracker missing before "
 				"Dumpfile_String\n");
 		exit(1);
 	}
+#endif
 
 	// Find the file name
-	if ((fname = ProcessConfigOpt("string")) == "" || 
+	if ((fname = ProcessConfigOpt()) == "" ||
 		globalreg->fatal_condition) {
 		return;
 	}
@@ -74,9 +78,15 @@ Dumpfile_String::Dumpfile_String(GlobalRegistry *in_globalreg) :
 
 	globalreg->RegisterDumpFile(this);
 
-	globalreg->builtindissector->SetStringExtract(2);
-	_MSG("Dumpfile_String - forced string extraction from packets at all times", 
-		 MSGFLAG_INFO);
+//	globalreg->builtindissector->SetStringExtract(2);
+
+	Kis_80211_Phy *dot11phy = 
+		(Kis_80211_Phy *) globalreg->FetchGlobal("PHY_80211");
+	if (dot11phy != NULL) {
+		dot11phy->SetStringExtract(2);
+		_MSG("Dumpfile_String - forced string extraction from packets at all times", 
+			 MSGFLAG_INFO);
+	}
 }
 
 Dumpfile_String::~Dumpfile_String() {
@@ -111,9 +121,9 @@ int Dumpfile_String::chain_handler(kis_packet *in_pack) {
 		return 0;
 
 	// Grab the 80211 info, compare, bail
-    kis_ieee80211_packinfo *packinfo;
+    dot11_packinfo *packinfo;
 	if ((packinfo = 
-		 (kis_ieee80211_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211))) == NULL)
+		 (dot11_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211))) == NULL)
 		return 0;
 	if (packinfo->corrupt)
 		return 0;

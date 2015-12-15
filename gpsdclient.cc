@@ -207,6 +207,7 @@ int GPSDClient::ParseData() {
         globalreg->messagebus->InjectMessage("GPSDClient::ParseData failed to "
 											 "fetch data from the tcp connection.", 
 											 MSGFLAG_ERROR);
+        delete[] buf;
         return -1;
     }
 
@@ -287,7 +288,7 @@ int GPSDClient::ParseData() {
 				}
 
 				// If we have a valid alt, use it
-				if (in_mode > 2) {
+				if (use_mode && in_mode > 2) {
 					n = JSON_dict_get_number(json, "alt", err);
 					if (err.length() == 0) {
 						in_alt = n;
@@ -295,7 +296,7 @@ int GPSDClient::ParseData() {
 					}
 				} 
 
-				if (in_mode >= 2) {
+				if (use_mode && in_mode >= 2) {
 					// If we have LAT and LON, use them
 					n = JSON_dict_get_number(json, "lat", err);
 					if (err.length() == 0) {
@@ -350,7 +351,7 @@ int GPSDClient::ParseData() {
 
 					if (v->value.tok_type == JSON_arrstart) {
 						for (unsigned int z = 0; z < v->value_array.size(); z++) {
-							float prn = 0, ele = 0, az = 0, snr = 0;
+							float prn, ele, az, snr;
 							int valid = 1;
 
 							s = v->value_array[z];

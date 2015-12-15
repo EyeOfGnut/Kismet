@@ -58,6 +58,8 @@ void TextCliFrame::RemoveCallback(int in_id) {
 	}
 }
 
+// static int debug_lineno = 0;
+
 int TextCliFrame::ParseData() {
 	int len, rlen = 0, roft = 0;
 	char *buf;
@@ -68,6 +70,7 @@ int TextCliFrame::ParseData() {
 
 	if (netclient->ReadData(buf, len, &rlen) < 0) {
 		_MSG("Textclient::Parsedata failed to fetch data", MSGFLAG_ERROR);
+    delete[] buf;
 		return -1;
 	}
 
@@ -89,6 +92,7 @@ int TextCliFrame::ParseData() {
 	for (unsigned int it = 0; it < inptok.size(); it++) {
 		netclient->MarkRead(inptok[it].length() + 1 + roft);
 		inptok[it] = StrPrintable(inptok[it]);
+		// inptok[it] = IntToString(debug_lineno++) + " " + StrPrintable(inptok[it]);
 
 		for (unsigned int c = 0; c < callback_vec.size(); c++) {
 			(*callback_vec[c].cb)(inptok[it], callback_vec[c].auxptr);

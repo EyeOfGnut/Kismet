@@ -34,6 +34,7 @@
 #include "gpscore.h"
 #include "version.h"
 #include "packetsourcetracker.h"
+#include "phy_80211.h"
 
 void KisDroneframe_MessageClient::ProcessMessage(string in_msg, int in_flags) {
 	string msg;
@@ -49,7 +50,7 @@ int kisdrone_chain_hook(CHAINCALL_PARMS) {
 }
 
 int kisdrone_time_hook(TIMEEVENT_PARMS) {
-	return ((KisDroneFramework *) parm)->time_handler();
+	return ((KisDroneFramework *) auxptr)->time_handler();
 }
 
 int dronecmd_channelset_hook(DRONE_CMD_PARMS) {
@@ -167,7 +168,7 @@ KisDroneFramework::KisDroneFramework(GlobalRegistry *in_globalreg) {
 	}
 
 	// We only know how to set up a tcp server
-	if (strncasecmp(srv_proto, "tcp", 10) == 0) {
+	if (strncasecmp(srv_proto, "tcp", 4) == 0) {
 		tcpsrv = new TcpServer(globalreg);
 		tcpsrv->SetupServer(port, maxcli, srv_bindhost,
 							globalreg->kismet_config->FetchOpt("droneallowedhosts"));
@@ -765,7 +766,11 @@ int KisDroneFramework::chain_handler(kis_packet *in_pack) {
 	kis_layer1_packinfo *radio = NULL;
 	kis_datachunk *chunk = NULL;
 	kis_ref_capsource *csrc_ref = NULL;
+<<<<<<< HEAD
 	kis_fcs_bytes *fcs = NULL;
+=======
+	kis_packet_checksum *fcs = NULL;
+>>>>>>> upstream/master
 
 	// Get the capsource info
 	csrc_ref = (kis_ref_capsource *) in_pack->fetch(_PCM(PACK_COMP_KISCAPSRC));
@@ -777,23 +782,33 @@ int KisDroneFramework::chain_handler(kis_packet *in_pack) {
 	radio = (kis_layer1_packinfo *) in_pack->fetch(_PCM(PACK_COMP_RADIODATA));
 
 	// Get any fcs data
+<<<<<<< HEAD
 	fcs = (kis_fcs_bytes *) in_pack->fetch(_PCM(PACK_COMP_FCSBYTES));
+=======
+	fcs = (kis_packet_checksum *) in_pack->fetch(_PCM(PACK_COMP_CHECKSUM));
+>>>>>>> upstream/master
 
 	// Try to find if we have a data chunk through various means
 	chunk = (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_MANGLEFRAME));
 	if (chunk == NULL) {
-		chunk = (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_80211FRAME));
+		chunk = (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_DECAP));
 	}
 	if (chunk == NULL) {
 		chunk = (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_LINKFRAME));
 	}
 
 	if (fcs == NULL) {
+<<<<<<< HEAD
 		fcs = new kis_fcs_bytes;
 		fcs->fcs[0] = 0xDE;
 		fcs->fcs[1] = 0xAD;
 		fcs->fcs[2] = 0xBE;
 		fcs->fcs[3] = 0xEF;
+=======
+		fcs = new kis_packet_checksum;
+		uint8_t fcsb[4] = {0xDE, 0xAD, 0xBE, 0xEF};
+		fcs->set_data(fcsb, 4);
+>>>>>>> upstream/master
 	}
 
 	// Add up the size of the packet for the data[0] component 
@@ -889,7 +904,11 @@ int KisDroneFramework::chain_handler(kis_packet *in_pack) {
 	if (fcs != NULL) {
 		dcpkt->cap_content_bitmap |= DRONEBIT(DRONE_CONTENT_FCS);
 
+<<<<<<< HEAD
 		memcpy(&(dcpkt->content[suboffst]), fcs->fcs, 4);
+=======
+		memcpy(&(dcpkt->content[suboffst]), fcs->data, 4);
+>>>>>>> upstream/master
 		
 		suboffst += 4;
 	}

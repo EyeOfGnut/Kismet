@@ -29,6 +29,8 @@ GlobalRegistry::GlobalRegistry() {
 	fatal_condition = 0;
 	spindown = 0;
 
+	kismet_instance = KISMET_INSTANCE_SERVER;
+
 	winch = false;
 
 	argc = 0;
@@ -81,6 +83,7 @@ GlobalRegistry::GlobalRegistry() {
 	filter_export_dest_invert = -1;
 
 	broadcast_mac = mac_addr("FF:FF:FF:FF:FF:FF");
+	empty_mac = mac_addr(0);
 
 	alert_backlog = 0;
 
@@ -100,11 +103,19 @@ GlobalRegistry::GlobalRegistry() {
 // External globals -- allow other things to tie structs to us
 int GlobalRegistry::RegisterGlobal(string in_name) {
 	map<string, int>::iterator i;
+<<<<<<< HEAD
+
+	if ((i = ext_name_map.find(StrLower(in_name))) != ext_name_map.end())
+		return i->second;
+=======
+>>>>>>> upstream/master
 
 	if ((i = ext_name_map.find(StrLower(in_name))) != ext_name_map.end())
 		return i->second;
 
-	ext_name_map[StrLower(in_name)] = next_ext_ref++;
+	next_ext_ref++;
+
+	ext_name_map[StrLower(in_name)] = next_ext_ref;
 
 	return next_ext_ref;
 }
@@ -126,15 +137,29 @@ void *GlobalRegistry::FetchGlobal(int in_ref) {
 void *GlobalRegistry::FetchGlobal(string in_name) {
 	int ref;
 
+<<<<<<< HEAD
 	if ((ref = FetchGlobalRef(in_name)) < 0)
 		return NULL;
+=======
+	if ((ref = FetchGlobalRef(in_name)) < 0) {
+		return NULL;
+	}
+>>>>>>> upstream/master
 
 	return ext_data_map[ref];
 }
 
 int GlobalRegistry::InsertGlobal(int in_ref, void *in_data) {
+<<<<<<< HEAD
 	if (ext_data_map.find(in_ref) == ext_data_map.end())
+=======
+	/*
+	if (ext_data_map.find(in_ref) == ext_data_map.end()) {
+		fprintf(stderr, "debug - insertglobal no ref %d\n", in_ref);
+>>>>>>> upstream/master
 		return -1;
+	}
+	*/
 
 	ext_data_map[in_ref] = in_data;
 
@@ -185,4 +210,20 @@ Dumpfile *GlobalRegistry::FindDumpFileType(string in_type) {
 	}
 
 	return NULL;
+}
+
+void GlobalRegistry::AddNamedFd(string in_name, int fd) {
+	string un = StrUpper(in_name);
+
+	namedfd_map[un] = fd;
+}
+
+int GlobalRegistry::GetNamedFd(string in_name) {
+	string un = StrUpper(in_name);
+
+	if (namedfd_map.find(un) != namedfd_map.end()) {
+		return namedfd_map.find(un)->second;
+	}
+
+	return -1;
 }

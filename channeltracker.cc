@@ -52,7 +52,7 @@ int ct_chan_hook(CHAINCALL_PARMS) {
 }
 
 int ct_channeltimer(TIMEEVENT_PARMS) {
-	((Channeltracker *) parm)->ChanTimer();
+	((Channeltracker *) auxptr)->ChanTimer();
 	return 1;
 }
 
@@ -210,8 +210,8 @@ void Channeltracker::ChanTimer() {
 }
 
 void Channeltracker::ChainHandler(kis_packet *in_pack) {
-	kis_ieee80211_packinfo *packinfo =
-		(kis_ieee80211_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211));
+	dot11_packinfo *packinfo =
+		(dot11_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211));
 	kis_layer1_packinfo *radioinfo =
 		(kis_layer1_packinfo *) in_pack->fetch(_PCM(PACK_COMP_RADIODATA));
 

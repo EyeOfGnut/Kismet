@@ -103,6 +103,7 @@ PacketSource_Wext::PacketSource_Wext(GlobalRegistry *in_globalreg,
 
 	// Don't warn about wpa_supplicant if we're going to use it
 	string processes;
+
 	if (scan_wpa == 0) {
 		if (FindProcess("wpa_action", interface))
 			processes += "wpa_action ";
@@ -110,15 +111,15 @@ PacketSource_Wext::PacketSource_Wext(GlobalRegistry *in_globalreg,
 			processes += "wpa_supplicant ";
 		if (FindProcess("wpa_cli", interface))
 			processes += "wpa_cli ";
+
+		vector<string> look_procs = 
+			StrTokenize("dhclient,ifplugd,dhcpbd,dhcpcd,NetworkManager,knetworkmanager,"
+						"avahi-daemon,wlanassistant,wifibox", ",");
+
+		for (unsigned int x = 0; x < look_procs.size(); x++) 
+			if (FindProcess(look_procs[x], interface))
+				processes += look_procs[x] + string(" ");
 	}
-
-	vector<string> look_procs = 
-		StrTokenize("dhclient,ifplugd,dhcpbd,dhcpcd,NetworkManager,knetworkmanager,"
-					"avahi-daemon,wlanassistant,wifibox", ",");
-
-	for (unsigned int x = 0; x < look_procs.size(); x++) 
-		if (FindProcess(look_procs[x], interface))
-			processes += look_procs[x] + string(" ");
 
 	processes = processes.substr(0, processes.length() - 1);
 
@@ -173,8 +174,13 @@ int PacketSource_Wext::ParseOptions(vector<opt_pair> *in_opts) {
 
 	if (FetchOpt("vap", in_opts) != "") {
 		vap = FetchOpt("vap", in_opts);
+<<<<<<< HEAD
 		_MSG("Source '" + interface + "' will attempt to create a monitor-only "
 			 "VIF '" + vap + "' instead of reconfiguring the main interface", 
+=======
+		_MSG("Source '" + interface + "' create a monitor-only "
+			 "VAP '" + vap + "' instead of changing " + interface, 
+>>>>>>> upstream/master
 			 MSGFLAG_INFO);
 		// Opportunistic VAP off when specified
 		opp_vap = 0;
@@ -192,9 +198,12 @@ int PacketSource_Wext::ParseOptions(vector<opt_pair> *in_opts) {
 	if (FetchOptBoolean("forcevap", in_opts, 0))
 		force_vap = 1;
 
+<<<<<<< HEAD
     if (FetchOptBoolean("forcevif", in_opts, 0))
         force_vap = 1;
 
+=======
+>>>>>>> upstream/master
 	// Turn on VAP by default
 	// if (vap == "" && (FetchOpt("forcevap", in_opts) == "" || 
 	// 				  StrLower(FetchOpt("forcevap", in_opts)) == "true")) {
@@ -290,6 +299,7 @@ int PacketSource_Wext::AutotypeProbe(string in_device) {
 		sysdriver == "adm8211" || sysdriver == "ath5k" ||
 		sysdriver == "ath9k" || sysdriver == "b43" ||
 		sysdriver == "ath5k_pci" || sysdriver == "ath9k_pci" ||
+		sysdriver == "ath9k_htc" || 
 		sysdriver == "b43legacy" || sysdriver == "hostap" ||
 		sysdriver == "libertas" || sysdriver == "p54" ||
 		sysdriver == "libertas_usb" || sysdriver == "libertas_tf" ||
@@ -301,6 +311,7 @@ int PacketSource_Wext::AutotypeProbe(string in_device) {
 		sysdriver == "rt2400pci" || sysdriver == "rt61pci" ||
 		sysdriver == "rtl8180"  || sysdriver == "zd1201" ||
 		sysdriver == "rtl8187" || sysdriver == "zd1211rw" ||
+		sysdriver == "iwlwifi" || 
 		// These don't seem to work but i'll autodet anyhow
 		sysdriver == "rt2870sta" ||
 		//  These drivers don't behave sanely but throw errors when we open them
@@ -336,6 +347,7 @@ int PacketSource_Wext::RegisterSources(Packetsourcetracker *tracker) {
 	tracker->RegisterPacketProto("ath5k_pci", this, "IEEE80211b", 1);
 	tracker->RegisterPacketProto("ath9k", this, "IEEE80211ab", 1);
 	tracker->RegisterPacketProto("ath9k_pci", this, "IEEE80211b", 1);
+	tracker->RegisterPacketProto("ath9k_htc", this, "IEEE80211b", 1);
 	tracker->RegisterPacketProto("bcm43xx", this, "IEEE80211b", 1);
 	tracker->RegisterPacketProto("b43", this, "IEEE80211b", 1);
 	tracker->RegisterPacketProto("b43legacy", this, "IEEE80211b", 1);
@@ -347,6 +359,7 @@ int PacketSource_Wext::RegisterSources(Packetsourcetracker *tracker) {
 	tracker->RegisterPacketProto("iwl3945", this, "IEEE80211ab", 1);
 	tracker->RegisterPacketProto("iwl4965", this, "IEEE80211ab", 1);
 	tracker->RegisterPacketProto("iwlagn", this, "IEEE80211ab", 1);
+	tracker->RegisterPacketProto("iwlwifi", this, "IEEE80211ab", 1);
 	tracker->RegisterPacketProto("libertas", this, "IEEE80211b", 1);
 	tracker->RegisterPacketProto("libertas_usb", this, "IEEE80211b", 1);
 	tracker->RegisterPacketProto("libertas_tf", this, "IEEE80211b", 1);
@@ -387,7 +400,7 @@ int PacketSource_Wext::RegisterSources(Packetsourcetracker *tracker) {
 }
 
 int wext_ping_wpasup_event(TIMEEVENT_PARMS) {
-	return ((PacketSource_Wext *) parm)->ScanWpaSupplicant();
+	return ((PacketSource_Wext *) auxptr)->ScanWpaSupplicant();
 }
 
 void PacketSource_Wext::OpenWpaSupplicant() {
@@ -447,7 +460,7 @@ int PacketSource_Wext::ScanWpaSupplicant() {
 		return 1;
 	}
 
-	const char *scan = "SCAN";
+	const char scan[] = "SCAN";
 
 	if (write(wpa_sock, scan, sizeof(scan)) != sizeof(scan)) {
 		_MSG("Source '" + parent + "' error writing to wpa_supplicant socket, "
@@ -767,15 +780,19 @@ int PacketSource_Wext::SetChannel(unsigned int in_ch) {
 	char errstr[STATUS_MAX];
 	int err = 0;
 
+	// printf("debug - wext - setting channel - %u\n", in_ch);
+
 	// Set and exit if we're ok
 	if (use_mac80211) {
 		if ((err = mac80211_setchannel_cache(interface.c_str(), globalreg->nlhandle, 
 											 nlfamily, in_ch, 0, errstr)) >= 0) {
+			last_channel = in_ch;
 			consec_error = 0;
 			return 1;
 		}
 	} else {
 		if ((err = Iwconfig_Set_Channel(interface.c_str(), in_ch, errstr)) >= 0) {
+			last_channel = in_ch;
 			consec_error = 0;
 			return 1;
 		}
@@ -849,9 +866,15 @@ int PacketSource_Wext::FetchHardwareChannel() {
 	// and if we blow up badly enough that we can't get channels, we'll
 	// blow up definitively on something else soon enough
     if ((chan = Iwconfig_Get_Channel(interface.c_str(), errstr)) < 0) {
+<<<<<<< HEAD
         globalreg->messagebus->InjectMessage("Source '" + name + "': " + errstr, 
 											 MSGFLAG_INFO);
 		chan = 0;
+=======
+        // globalreg->messagebus->InjectMessage("Source '" + name + "': " + errstr, 
+		//									 MSGFLAG_PRINTERROR);
+        return -1;
+>>>>>>> upstream/master
     }
 
 	last_channel = chan;
@@ -888,13 +911,32 @@ PacketSource_Madwifi::PacketSource_Madwifi(GlobalRegistry *in_globalreg,
 	vapdestroy = 1;
 
 	// if (FetchOpt("vapkill", in_opts) != "" && FetchOpt("vapkill", in_opts) != "true") {
+<<<<<<< HEAD
 	if (!FetchOptBoolean("vapkill", in_opts, 1) && !FetchOptBoolean("vifkill", in_opts, 1)) {
+=======
+	if (FetchOptBoolean("vapkill", in_opts, 1)) {
+>>>>>>> upstream/master
 		vapdestroy = 0;
 		_MSG("Madwifi-NG source " + name + " " + interface + ": Disabling destruction "
 			 "of non-monitor VIFs.  This may cause problems with some driver versions, "
              "if you have problems set vifkill=true in source options.", MSGFLAG_INFO);
 	}
 
+}
+
+int PacketSource_Madwifi::OpenSource() {
+	int r = PacketSource_Pcap::OpenSource();
+
+	if (r < 0)
+		return r;
+
+	if (DatalinkType() < 0) {
+		if (pd != NULL)
+			pcap_close(pd);
+		return -1;
+	}
+
+	return 1;
 }
 
 int PacketSource_Madwifi::OpenSource() {

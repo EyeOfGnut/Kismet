@@ -33,6 +33,8 @@
 #include <vector>
 #include <map>
 
+#include <pthread.h>
+
 #include "globalregistry.h"
 #include "packet.h"
 
@@ -52,6 +54,8 @@
 //
 // CLASSIFIER
 //
+// TRACKER
+//
 // LOGGING
 //
 // DESTROY
@@ -63,10 +67,13 @@
 #define CHAINPOS_DECRYPT        4
 #define CHAINPOS_DATADISSECT    5
 #define CHAINPOS_CLASSIFIER     6
-#define CHAINPOS_LOGGING        7
-#define CHAINPOS_DESTROY        8
+#define CHAINPOS_TRACKER		7
+#define CHAINPOS_LOGGING        8
+#define CHAINPOS_DESTROY        9
 
 #define CHAINCALL_PARMS GlobalRegistry *globalreg, void *auxdata, kis_packet *in_pack
+
+class kis_packet;
 
 class Packetchain {
 public:
@@ -75,6 +82,7 @@ public:
 
     int RegisterPacketComponent(string in_component);
     int RemovePacketComponent(int in_id);
+	string FetchPacketComponentName(int in_id);
 
     // Generate a packet and hand it back
     kis_packet *GeneratePacket();
@@ -89,16 +97,18 @@ public:
         int priority;
 		Packetchain::pc_callback callback;
         void *auxdata;
+		int id;
     } pc_link;
 
     // Register a callback, aux data, a chain to put it in, and the priority 
     int RegisterHandler(pc_callback in_cb, void *in_aux, int in_chain, int in_prio);
     int RemoveHandler(pc_callback in_cb, int in_chain);
+	int RemoveHandler(int in_id, int in_chain);
 
 protected:
     GlobalRegistry *globalreg;
 
-    int next_componentid;
+    int next_componentid, next_handlerid;
 
     map<string, int> component_str_map;
     map<int, string> component_id_map;
@@ -114,7 +124,10 @@ protected:
     vector<Packetchain::pc_link *> decrypt_chain;
     vector<Packetchain::pc_link *> datadissect_chain;
     vector<Packetchain::pc_link *> classifier_chain;
+	vector<Packetchain::pc_link *> tracker_chain;
     vector<Packetchain::pc_link *> logging_chain;
+
+	pthread_mutex_t packetchain_mutex;
 };
 
 #endif

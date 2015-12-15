@@ -60,6 +60,11 @@ public:
     int gps_fix;
 };
 
+#define KIS_GPS_ALT_BOGUS_MAX 		100000
+#define KIS_GPS_ALT_BOGUS_MIN 		-100000
+#define KIS_GPS_SPD_BOGUS_MAX 		100000
+#define KIS_GPS_SPD_BOGUS_MIN 		-100000
+
 struct kis_gps_data {
 	kis_gps_data() {
 		gps_valid = 0;
@@ -68,10 +73,10 @@ struct kis_gps_data {
 		max_lat = -90;
 		min_lon = 180;
 		max_lon = -180;
-		min_alt = 100000;
-		max_alt = -100000;
-		min_spd = 100000;
-		max_spd = -100000;
+		min_alt = KIS_GPS_ALT_BOGUS_MIN;
+		max_alt = KIS_GPS_ALT_BOGUS_MAX;
+		min_spd = KIS_GPS_SPD_BOGUS_MIN;
+		max_spd = KIS_GPS_SPD_BOGUS_MAX;
 
 		add_lat = add_lon = add_alt = 0;
 
@@ -102,6 +107,9 @@ struct kis_gps_data {
 	}
 
 	inline kis_gps_data& operator+= (const kis_gps_packinfo *in) {
+		if (in == NULL)
+			return *this;
+
 		if (in->gps_fix >= 2) {
 			gps_valid = 1;
 
@@ -185,7 +193,7 @@ struct kis_gps_data {
 	// Aggregate/avg center position
 	uint64_t add_lat, add_lon, add_alt;
 	double aggregate_lat, aggregate_lon, aggregate_alt;
-	long aggregate_points;
+	unsigned long aggregate_points;
 };
 
 // Some nasty hacks for GPS automation in plugins w/out having to rewrite
@@ -216,6 +224,10 @@ public:
     void SetOptions(uint32_t in_opt) {
         gps_options = in_opt;
     }
+
+	// Fetch info about the gps
+	virtual string FetchDevice() = 0;
+	virtual string FetchType() = 0;
 
     // Fetch a location
     int FetchLoc(double *in_lat, double *in_lon, double *in_alt, double *in_spd, 

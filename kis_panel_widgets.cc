@@ -34,7 +34,7 @@
 #define WIN_CENTER(h, w)   (LINES / 2) - ((h) / 2), (COLS / 2) - ((w) / 2), (h), (w)
 
 unsigned int Kis_Panel_Specialtext::Strlen(string str) {
-	int npos = 0;
+	unsigned int npos = 0;
 	int escape = 0;
 
 	for (unsigned int pos = 0; pos < str.size(); pos++) {
@@ -266,7 +266,7 @@ void Kis_Panel_Color::RemapAllColors(string oldcolor, string newcolor,
 }
 
 int panelint_draw_timer(TIMEEVENT_PARMS) {
-	return ((PanelInterface *) parm)->DrawInterface();
+	return ((PanelInterface *) auxptr)->DrawInterface();
 }
 
 // Pollable panel interface driver
@@ -411,6 +411,7 @@ void PanelInterface::KillPanel(Kis_Panel *in_panel) {
 	for (unsigned int x = 0; x < live_panels.size(); x++) {
 		if (live_panels[x] == in_panel) {
 			dead_panels.push_back(in_panel);
+			in_panel->KillPanel();
 			live_panels.erase(live_panels.begin() + x);
 		}
 	}
@@ -936,7 +937,7 @@ void Kis_Menu::SetMenuVis(int in_menu, int in_vis) {
 	menubar[in_menu]->visible = in_vis;
 }
 
-int Kis_Menu::AddMenuItem(string in_text, int menuid, char extra) {
+int Kis_Menu::AddMenuItem(string in_text, int menuid, char extra, int after) {
 	if (menuid < 0 || menuid > (int) menubar.size() - 1)
 		return -1;
 
@@ -973,7 +974,30 @@ int Kis_Menu::AddMenuItem(string in_text, int menuid, char extra) {
 
 	item->submenu = -1;
 
-	menubar[menuid]->items.push_back(item);
+	if (after >= 0) {
+		bool found = false;
+
+		int amid = after / 100;
+		int aiid = (after % 100) - 1;
+
+		if (amid < 0 || amid >= (int) menubar.size() || amid != menuid) {
+			aiid = -1;
+		}
+
+		vector<Kis_Menu::_menuitem *>::iterator p;
+		for (p = menubar[amid]->items.begin(); p != menubar[amid]->items.end(); p++) {
+			if ((*p)->id == aiid) {
+				found = true;
+				menubar[amid]->items.insert(p + 1, item);
+				break;
+			}
+		}
+
+		if (!found)
+			menubar[menuid]->items.push_back(item);
+	} else {
+		menubar[menuid]->items.push_back(item);
+	}
 
 	if ((int) in_text.length() > menubar[menuid]->width)
 		menubar[menuid]->width = in_text.length();
@@ -991,7 +1015,13 @@ void Kis_Menu::SetMenuItemChecked(int in_item, int in_checked) {
 	if (iid < 0 || iid > (int) menubar[mid]->items.size())
 		return;
 
-	menubar[mid]->items[iid]->checked = in_checked;
+	vector<Kis_Menu::_menuitem *>::iterator p;
+	for (p = menubar[mid]->items.begin(); p != menubar[mid]->items.end(); p++) {
+		if ((*p)->id == iid) {
+			(*p)->checked = in_checked;
+			break;
+		}
+	}
 	menubar[mid]->checked = -1;
 
 	// Update the checked menu status
@@ -999,6 +1029,28 @@ void Kis_Menu::SetMenuItemChecked(int in_item, int in_checked) {
 		if (menubar[mid]->items[x]->checked > menubar[mid]->checked)
 			menubar[mid]->checked = menubar[mid]->items[x]->checked;
 	}
+}
+
+int Kis_Menu::GetMenuItemChecked(int in_item) {
+	int mid = in_item / 100;
+	int iid = (in_item % 100) - 1;
+
+	if (mid < 0 || mid >= (int) menubar.size())
+		return 0;
+
+	if (iid < 0 || iid > (int) menubar[mid]->items.size())
+		return 0;
+
+	vector<Kis_Menu::_menuitem *>::iterator p;
+	for (p = menubar[mid]->items.begin(); p != menubar[mid]->items.end(); p++) {
+		if ((*p)->id == iid) {
+			if ((*p)->checked <= 0)
+				return 0;
+			return 1;
+		}
+	}
+
+	return 1;
 }
 
 void Kis_Menu::SetMenuItemColor(int in_item, string in_color) {
@@ -1011,7 +1063,13 @@ void Kis_Menu::SetMenuItemColor(int in_item, string in_color) {
 	if (iid < 0 || iid > (int) menubar[mid]->items.size())
 		return;
 
-	menubar[mid]->items[iid]->colorpair = parent_panel->AddColor(in_color);
+	vector<Kis_Menu::_menuitem *>::iterator p;
+	for (p = menubar[mid]->items.begin(); p != menubar[mid]->items.end(); p++) {
+		if ((*p)->id == iid) {
+			(*p)->colorpair = parent_panel->AddColor(in_color);
+			break;
+		}
+	}
 }
 
 int Kis_Menu::AddSubMenuItem(string in_text, int menuid, char extra) {
@@ -1029,7 +1087,13 @@ int Kis_Menu::AddSubMenuItem(string in_text, int menuid, char extra) {
 	// pointing to our menuid so we can find it during drawing
 	int sitem = AddMenuItem(in_text, menuid, extra);
 
-	menubar[menuid]->items[(sitem % 100) - 1]->submenu = smenuid;
+	vector<Kis_Menu::_menuitem *>::iterator p;
+	for (p = menubar[menuid]->items.begin(); p != menubar[menuid]->items.end(); p++) {
+		if ((*p)->id == (sitem % 100) - 1) {
+			(*p)->submenu = smenuid;
+			break;
+		}
+	}
 
 	// Return the id of the menu we made so we can add things to it
 	return smenuid;
@@ -1045,7 +1109,13 @@ void Kis_Menu::DisableMenuItem(int in_item) {
 	if (iid < 0 || iid > (int) menubar[mid]->items.size())
 		return;
 
-	menubar[mid]->items[iid]->enabled = 0;
+	vector<Kis_Menu::_menuitem *>::iterator p;
+	for (p = menubar[mid]->items.begin(); p != menubar[mid]->items.end(); p++) {
+		if ((*p)->id == iid) {
+			(*p)->enabled = 0;
+			break;
+		}
+	}
 }
 
 void Kis_Menu::SetMenuItemCallback(int in_item, kis_menuitem_cb in_cb, void *in_aux) {
@@ -1058,8 +1128,14 @@ void Kis_Menu::SetMenuItemCallback(int in_item, kis_menuitem_cb in_cb, void *in_
 	if (iid < 0 || iid > (int) menubar[mid]->items.size())
 		return;
 
-	menubar[mid]->items[iid]->callback = in_cb;
-	menubar[mid]->items[iid]->auxptr = in_aux;
+	vector<Kis_Menu::_menuitem *>::iterator p;
+	for (p = menubar[mid]->items.begin(); p != menubar[mid]->items.end(); p++) {
+		if ((*p)->id == iid) {
+			(*p)->callback = in_cb;
+			(*p)->auxptr = in_aux;
+			break;
+		}
+	}
 }
 
 void Kis_Menu::ClearMenuItemCallback(int in_item) {
@@ -1072,8 +1148,14 @@ void Kis_Menu::ClearMenuItemCallback(int in_item) {
 	if (iid < 0 || iid > (int) menubar[mid]->items.size())
 		return;
 
-	menubar[mid]->items[iid]->callback = NULL;
-	menubar[mid]->items[iid]->auxptr = NULL;
+	vector<Kis_Menu::_menuitem *>::iterator p;
+	for (p = menubar[mid]->items.begin(); p != menubar[mid]->items.end(); p++) {
+		if ((*p)->id == iid) {
+			(*p)->callback = NULL;
+			(*p)->auxptr = NULL;
+			break;
+		}
+	}
 }
 
 void Kis_Menu::SetMenuItemCheckSymbol(int in_item, char in_sym) {
@@ -1086,7 +1168,14 @@ void Kis_Menu::SetMenuItemCheckSymbol(int in_item, char in_sym) {
 	if (iid < 0 || iid > (int) menubar[mid]->items.size())
 		return;
 
-	menubar[mid]->items[iid]->checksymbol = in_sym;
+	vector<Kis_Menu::_menuitem *>::iterator p;
+	for (p = menubar[mid]->items.begin(); p != menubar[mid]->items.end(); p++) {
+		if ((*p)->id == iid) {
+			(*p)->checksymbol = in_sym;
+			break;
+		}
+	}
+	// menubar[mid]->items[iid]->checksymbol = in_sym;
 }
 
 void Kis_Menu::EnableMenuItem(int in_item) {
@@ -1099,7 +1188,14 @@ void Kis_Menu::EnableMenuItem(int in_item) {
 	if (iid < 0 || iid > (int) menubar[mid]->items.size())
 		return;
 
-	menubar[mid]->items[iid]->enabled = 1;
+	vector<Kis_Menu::_menuitem *>::iterator p;
+	for (p = menubar[mid]->items.begin(); p != menubar[mid]->items.end(); p++) {
+		if ((*p)->id == iid) {
+			(*p)->enabled = 1;
+			break;
+		}
+	}
+	// menubar[mid]->items[iid]->enabled = 1;
 }
 
 void Kis_Menu::EnableAllItems(int in_menu) {
@@ -1128,7 +1224,14 @@ void Kis_Menu::SetMenuItemVis(int in_item, int in_vis) {
 	if (iid < 0 || iid > (int) menubar[mid]->items.size())
 		return;
 
-	menubar[mid]->items[iid]->visible = in_vis;
+	vector<Kis_Menu::_menuitem *>::iterator p;
+	for (p = menubar[mid]->items.begin(); p != menubar[mid]->items.end(); p++) {
+		if ((*p)->id == iid) {
+			(*p)->visible = in_vis;
+			break;
+		}
+	}
+	// menubar[mid]->items[iid]->visible = in_vis;
 }
 
 void Kis_Menu::ClearMenus() {
@@ -1188,16 +1291,20 @@ void Kis_Menu::DrawMenu(_menu *menu, WINDOW *win, int hpos, int vpos) {
 	// Resize the menu window, taking invisible items into account, also
 	// figure out the offset for any checked or disabled items
 	for (unsigned int y = 0; y < menu->items.size(); y++) {
-		if (menu->items[y]->visible) {
-			dsz++;
-
-			if (menu->items[y]->checked > -1)
-				width_add_check = 3;
-
-			if (menu->items[y]->enabled < 1)
-				width_add_en = 2;
-
+		if (menu->items[y]->visible == 0 ||
+			(menu->items[y]->submenu > 0 &&
+			 menubar[menu->items[y]->submenu]->visible == 0)) {
+			continue;
 		}
+
+		dsz++;
+
+		if (menu->items[y]->checked > -1)
+			width_add_check = 3;
+
+		if (menu->items[y]->enabled < 1)
+			width_add_en = 2;
+
 	}
 
 	mod_width = menu->width + 5 + width_add_check + width_add_en;
@@ -1216,8 +1323,11 @@ void Kis_Menu::DrawMenu(_menu *menu, WINDOW *win, int hpos, int vpos) {
 	for (unsigned int y = 0; y < menu->items.size(); y++) {
 		string menuline;
 
-		if (menu->items[y]->visible == 0)
+		if (menu->items[y]->visible == 0 ||
+			(menu->items[y]->submenu > 0 &&
+			 menubar[menu->items[y]->submenu]->visible == 0)) {
 			continue;
+		}
 
 		// Shortcut out a spacer
 		if (menu->items[y]->text[0] == '-') {
@@ -1356,7 +1466,10 @@ void Kis_Menu::FindNextEnabledItem() {
 	int looped = 0;
 
 	// Handle disabled and spacer items
-	if (menubar[cur_menu]->items[cur_item]->enabled == 0) {
+	if (menubar[cur_menu]->items[cur_item]->enabled == 0 ||
+		menubar[cur_menu]->items[cur_item]->visible == 0 ||
+		(menubar[cur_menu]->items[cur_item]->submenu > 0 &&
+		 menubar[menubar[cur_menu]->items[cur_item]->submenu]->visible == 0)) {
 		// find the next enabled item
 		for (int i = cur_item; i <= (int) menubar[cur_menu]->items.size(); i++) {
 			// Loop
@@ -1370,8 +1483,11 @@ void Kis_Menu::FindNextEnabledItem() {
 				break;
 			}
 
-			if (menubar[cur_menu]->items[i]->visible == 0)
+			if (menubar[cur_menu]->items[i]->visible == 0 ||
+				(menubar[cur_menu]->items[i]->submenu > 0 &&
+				 menubar[menubar[cur_menu]->items[i]->submenu]->visible == 0)) {
 				continue;
+			}
 
 			if (menubar[cur_menu]->items[i]->enabled) {
 				cur_item = i;
@@ -1385,8 +1501,11 @@ void Kis_Menu::FindPrevEnabledItem() {
 	int looped = 0;
 
 	// Handle disabled and spacer items
-	if (menubar[cur_menu]->items[cur_item]->enabled == 0) {
-		// find the next enabled item
+	if (menubar[cur_menu]->items[cur_item]->enabled == 0 ||
+		menubar[cur_menu]->items[cur_item]->visible == 0 ||
+		(menubar[cur_menu]->items[cur_item]->submenu > 0 &&
+		 menubar[menubar[cur_menu]->items[cur_item]->submenu]->visible == 0)) {
+		// find the prev enabled item
 		for (int i = cur_item; i >= -1; i--) {
 			// Loop
 			if (i < 0) {
@@ -1399,8 +1518,11 @@ void Kis_Menu::FindPrevEnabledItem() {
 				break;
 			}
 
-			if (menubar[cur_menu]->items[i]->visible == 0)
+			if (menubar[cur_menu]->items[i]->visible == 0 ||
+				(menubar[cur_menu]->items[i]->submenu > 0 &&
+				 menubar[menubar[cur_menu]->items[i]->submenu]->visible == 0)) {
 				continue;
+			}
 
 			if (menubar[cur_menu]->items[i]->enabled) {
 				cur_item = i;
@@ -1537,7 +1659,9 @@ int Kis_Menu::KeyPress(int in_key) {
 			return -1;
 		}
 
-		int ret = (cur_menu * 100) + cur_item + 1;
+		// int ret = (cur_menu * 100) + cur_item + 1;
+		int ret = (cur_menu * 100) +
+			menubar[cur_menu]->items[cur_item]->id + 1;
 
 		// Per-menu callbacks
 		if (menubar[cur_menu]->items[cur_item]->callback != NULL) 
@@ -1581,7 +1705,10 @@ int Kis_Menu::KeyPress(int in_key) {
 			for (unsigned int x = 0; x < menubar[cur_menu]->items.size(); x++) {
 				if (in_key == menubar[cur_menu]->items[x]->extrachar &&
 					menubar[cur_menu]->items[x]->enabled == 1) {
-					int ret = (cur_menu * 100) + x + 1;
+
+					int ret = (cur_menu * 100) +
+						menubar[cur_menu]->items[x]->id + 1;
+					// int ret = (cur_menu * 100) + x + 1;
 
 					// Per-menu callbacks
 					if (menubar[cur_menu]->items[x]->callback != NULL) {
@@ -1670,7 +1797,9 @@ int Kis_Menu::MouseEvent(MEVENT *mevent) {
 				if (mitem >= 0 && mitem < (int) menubar[cur_menu]->items.size()) {
 					if (menubar[cur_menu]->items[mitem]->enabled == 1) {
 
-						int ret = (cur_menu * 100) + mitem + 1;
+						int ret = (cur_menu * 100) +
+							menubar[cur_menu]->items[cur_item]->id + 1;
+						// int ret = (cur_menu * 100) + mitem + 1;
 
 						// Per-menu callbacks
 						if (menubar[cur_menu]->items[mitem]->callback != NULL) 
@@ -1737,7 +1866,8 @@ int Kis_Menu::MouseEvent(MEVENT *mevent) {
 						}
 
 						// Otherwise, trigger the menu item
-						int ret = (cur_menu * 100) + mitem + 1;
+						int ret = (cur_menu * 100) +
+							menubar[cur_menu]->items[cur_item]->id + 1;
 
 						// Per-menu callbacks
 						if (menubar[cur_menu]->items[mitem]->callback != NULL) 
@@ -1762,49 +1892,6 @@ int Kis_Menu::MouseEvent(MEVENT *mevent) {
 			Deactivate();
 			return -1;
 		}
-
-#if 0
-		int hpos = 3;
-		int ypos = sy + 2;
-		for (unsigned int x = 0; x < (unsigned int) (cur_menu + 1); x++) {
-			if (menubar[x]->submenu || menubar[x]->visible == 0)
-				continue;
-
-			if (mevent->x < hpos)
-				break;
-
-			hpos += menubar[x]->text.length() + 1;
-
-			if (mevent->x <= hpos + (int) menubar[x]->text.length()) {
-				for (unsigned int y = 0; y < menubar[x]->items.size(); y++) {
-					if (menubar[x]->items[y]->visible == 0)
-						continue;
-					 
-					if (menubar[x]->items[y]->text[0] == '-') {
-						ypos++;
-						continue;
-					}
-
-					if (ypos == mevent->y) {
-						if (menubar[x]->items[y]->enabled == 0)
-							return -1;
-
-						// Trigger the item
-						if (cb_activate != NULL)
-							(*cb_activate)(this, (cur_menu * 100) + y + 1,
-										   cb_activate_aux, globalreg);
-
-						Deactivate();
-
-						return (cur_menu * 100) + y + 1;
-					}
-
-					ypos++;
-				}
-			}
-		}
-
-#endif
 
 	}
 
@@ -1934,6 +2021,25 @@ void Kis_Free_Text::AppendText(string in_text) {
 
 	if (lx < (int) Kis_Panel_Specialtext::Strlen(in_text))
 		SetPreferredSize(Kis_Panel_Specialtext::Strlen(in_text), text_vec.size());
+
+	// If we're following the tail then jump to the bottom when we add text
+	if (ly < (int) text_vec.size() && follow_tail)
+		scroll_pos = text_vec.size() - ly;
+}
+
+void Kis_Free_Text::AppendText(vector<string> in_text) {
+	text_vec.insert(text_vec.end(), in_text.begin(), in_text.end());
+
+	// Trim for max
+	if (max_text > 0 && (int) text_vec.size() > max_text) {
+		text_vec.erase(text_vec.begin(), text_vec.begin() + text_vec.size() - max_text);
+	}
+
+	// Update the preferred width
+	for (unsigned int x = 0; x < in_text.size(); x++) {
+		if (lx < (int) Kis_Panel_Specialtext::Strlen(in_text[x]))
+			SetPreferredSize(Kis_Panel_Specialtext::Strlen(in_text[x]), text_vec.size());
+	}
 
 	// If we're following the tail then jump to the bottom when we add text
 	if (ly < (int) text_vec.size() && follow_tail)
@@ -3077,7 +3183,7 @@ void Kis_IntGraph::DrawComponent() {
 
 			// If we're negative, do the math differently
 			// Adapt the group max to our scale
-			float adapted = 0;
+			float adapted;
 
 			if (max < 0) {
 				adapted = 
@@ -3433,6 +3539,10 @@ Kis_Panel::Kis_Panel(GlobalRegistry *in_globalreg, KisPanelInterface *in_intf) {
 	last_key_time.tv_sec = 0;
 
 	escape_timer = -1;
+
+	rc = -1;
+	rcallback = NULL;
+	raux = NULL;
 }
 
 Kis_Panel::~Kis_Panel() {
@@ -3632,7 +3742,7 @@ void Kis_Panel::Position(int in_sy, int in_sx, int in_y, int in_x) {
 int kp_escape_timer(TIMEEVENT_PARMS) {
 	// fprintf(stderr, "trigger escape timer %u %u\n", globalreg->timestamp.tv_sec, globalreg->timestamp.tv_usec);
 	ungetch(0x00);
-	((Kis_Panel *) parm)->Poll();
+	((Kis_Panel *) auxptr)->Poll();
 
 	return 0;
 }
@@ -3762,6 +3872,16 @@ void Kis_Panel::DrawComponentVec() {
 
 	if (menu != NULL)
 		menu->DrawComponent();
+}
+
+void Kis_Panel::SetCompleteCallback(KispanelCompleteRx in_callback, void *in_aux) {
+	rcallback = in_callback;
+	raux = in_aux;
+}
+
+void Kis_Panel::KillPanel() {
+	if (rcallback != NULL) 
+		(*rcallback)(rc, raux, globalreg);
 }
 
 #endif

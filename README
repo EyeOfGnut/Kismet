@@ -772,6 +772,20 @@ http://www.kismetwireless.net
     By default Kismet will log the pcap file, gps log, alerts, and network
     log in XML and plaintext.
 
+    Logs are controlled by the --log-types command-line option or the
+    logtypes= config file line.  Logs are enabled by name (nettxt, gpsxml,
+    etc) or by class (text, pcap, etc).  When enabled by class, Kismet will
+    enable all logs of that class.  For example, enabling 'pcap' will turn
+    on pcap logging for plugins which can save packets.
+
+    Supported log classes:
+        alert               IDS alerts
+        gps                 GPS data (xml)
+        text                Text-formatted records (nettxt, etc)
+        xml                 XML-formatted records (netxml)
+        pcap                Pcap-formatted packet logs
+        string              Discovered strings
+
     By default, Kismet will try to log to pcapfiles using the PPI per-packet
     header.  The PPI header is a well-documented header supported by
     Wireshark and other tools, which can contain spectrum data, radio data
@@ -796,11 +810,13 @@ http://www.kismetwireless.net
         %d      Starting date, Mmm-DD-YYYY
         %D      Starting date, YYYYMMDD
         %t      Starting time, HH-MM-SS
+        %T      Starting time, HHMMSS
         %i      Incremental, in the case of multiple logs of the same name
+        %I      Incremental, padded with zeroes (00001)
         %l      Log type (pcapdump, netxml, etc)
         %h      Home directory of the user Kismet was started as
 
-    The default log template with a --log-prefix of /tmp and a --log-title
+    The log template with a --log-prefix of /tmp and a --log-title
     of Kismet would expand from:
       logtemplate=%p%n-%D-%t-%i.%l
     to (for example):
@@ -880,12 +896,18 @@ http://www.kismetwireless.net
     Kismet supports the following alerts, where applicable the WVE (Wireless
     Vulnerability and Exploits, http://www.wve.org) ID is included:
 
-        AIRJACKSSID         Fingerprint         Deprecated
+        ADVCRYPTO           Trend/Stateful      802.11
+            An 802.11 AP changed advertised encryption options.  This 
+            may be a normal configuration change (though unlikely) or it 
+            may indicate a spoofed AP which did not correctly clone the 
+            original.
+
+        AIRJACKSSID         Fingerprint         802.11      Deprecated
             The original 802.11 hacking tools, Airjack, set the initial SSID
             to 'airjack' when starting up.  This alert is no longer relevant
             as the Airjack tools have long since been discontinued.
 
-        APSPOOF             Fingerprint
+        APSPOOF             Fingerprint         802.11
             A list of valid MAC addresses for a SSID may be given via the
             'apspoof=' configuration file option.  If a beacon or probe
             response for that SSID is seen from a MAC address not in that
@@ -907,7 +929,13 @@ http://www.kismetwireless.net
             For more information about forming PCRE-compatible regular
             expressions, see the PCRE docs (man pcrepattern).
 
-        BSSTIMESTAMP        Trend/Stateful
+        BEACONRATE          Trend/Stateful      802.11
+            An 802.11 AP changed advertised beacon rates.  This may be
+            a normal configuration change (though unlikely) or it may
+            indicate a spoofed AP which did not correctly clone the 
+            original.
+
+        BSSTIMESTAMP        Trend/Stateful      802.11
             Invalid/Out-of-sequence BSS Timestamps can indicate AP spoofing.
             APs with fluctuating BSS timestamps could be suffering an "evil
             twin" spoofing attack, as many tools do not attempt to sync the
@@ -919,7 +947,7 @@ http://www.kismetwireless.net
             References:
                 WVE-2005-0019
 
-        CHANCHANGE          Trend/Stateful
+        CHANCHANGE          Trend/Stateful      802.11
             A previously detected access point changing channels may
             indicate a spoofing attack.  By spoofing a legitimate AP on a
             different channel, an attacker can lure clients to the spoofed
@@ -931,14 +959,14 @@ http://www.kismetwireless.net
              References:
                 WVE-2005-0019
 
-        CRYPTODROP          Trend/Stateful
+        CRYPTODROP          Trend/Stateful      802.11
             Spoofing an AP with less-secure encryption options may fool
             clients into connecting with compromised credentials.  The only
             situation in which an access point should reduce encryption
             security is when the AP is reconfigured.
 
-        DEAUTHFLOOD         Trend/Stateful
-        BCASTDISCON         Trend/Stateful
+        DEAUTHFLOOD         Trend/Stateful      802.11
+        BCASTDISCON         Trend/Stateful      802.11
             By spoofing disassociate and deauthenticate packets an attacker
             may disconnect clients from a network, causing a
             denial-of-service which lasts only as long as the attacker is
@@ -949,49 +977,62 @@ http://www.kismetwireless.net
                 http://802.11ninja.net
                 http://home.jwu.edu/jwright/papers/l2-wlan-ids.pdf
 
-        DHCPCLIENTID        Fingerprint
+        DHCPCLIENTID        Fingerprint         802.11
             A client which sends a DHCP DISCOVER packet containing a
             Client-ID tag (Tag 61) which doesn't match the source MAC of the
             packet may be doing a DHCP denial-of-service to exhaust the DHCP
             pool.
 
-        DHCPCONFLICT        Trend/Stateful
+        DHCPCONFLICT        Trend/Stateful      802.11
             Clients which receive a DHCP address and continue to use a
             different IP address may indicate a misconfigured or spoofed
             client.
 
-        DISASSOCTRAFFIC     Trend/Stateful
+        DISASSOCTRAFFIC     Trend/Stateful      802.11
             A client which is disassociated from a network should not
             immediately continue exchanging data.  This can indicate a
             spoofed client attempting to incorrectly inject data into a
             network, or can indicate a client being the victim of a
             denial-of-service attack.
 
-        DISCONCODEINVALID   Fingerprint
-        DEAUTHCODEINVALID   Fingerprint
+        DISCONCODEINVALID   Fingerprint         802.11
+        DEAUTHCODEINVALID   Fingerprint         802.11
             The 802.11 specification defines valid reason codes for
             disconnect and deauthenticate events.  Various client and access
             point drivers have been reported to improperly handle
             invalid/undefined reason codes.
 
-        DHCPNAMECHANGE      Trend/Stateful
-        DHCPOSCHANGE        Trend/Stateful
+        DHCPNAMECHANGE      Trend/Stateful      802.11
+        DHCPOSCHANGE        Trend/Stateful      802.11
             The DHCP configuration protocol allows clients to optionally put
             the hostname and DHCP client vendor/operating system in the DHCP
             Discover packet.  These values should only change if the client
             has changed drastically (such as a dual-boot system).  Changing
             values can often indicate a client spoofing/MAC cloning attack.
 
-        LONGSSID            Fingerprint
+        DOT11D              Trend/Stateful      802.11
+            An 802.11 AP changed advertised 802.11d settings.  This may be
+            a normal configuration change (though unlikely) or it may
+            indicate a spoofed AP which did not correctly clone the 
+            original.
+            802.11d changes may also be an active attack meant to confuse
+            clients or alter their behavior.
+
+        LONGSSID            Fingerprint         802.11
             The 802.11 specification allows a maximum of 32 bytes for the
             SSID.  Over-sized SSIDs are indicative of an attack attempting
             to exploit vulnerabilities in several drivers.
 
-        LUCENTTEST          Fingerprint         Deprecated
+        LUCENTTEST          Fingerprint         802.11      Deprecated
             Old Lucent Orinoco cards in certain scanning test modes generate
             identifiable packets.
 
-        MSFBCOMSSID         Fingerprint
+        MALFORMMGMT         Fingerprint         802.11
+            Malformed management frames may indicate errors in the capture
+            source (such as not discarding corrupted packets), but may also
+            be indicative of an attack.
+
+        MSFBCOMSSID         Fingerprint         802.11
             Some versions of the Windows Broadcom wireless drivers do not
             properly handle SSID fields longer than the 802.11
             specification, leading to system compromise and code execution.
@@ -1000,7 +1041,7 @@ http://www.kismetwireless.net
             References:
                 WVE-2006-0071
 
-        MSFDLINKRATE        Fingerprint
+        MSFDLINKRATE        Fingerprint         802.11
             Some versions of the Windows D-Link wireless drivers do not
             properly handle extremely long 802.11 valid rate fields, leading
             to system compromise and code execution.  This vulnerability is
@@ -1009,17 +1050,17 @@ http://www.kismetwireless.net
             References:
                 WVE-2006-0072
 
-        MSFNETGEARBEACON    Fingerprint
+        MSFNETGEARBEACON    Fingerprint         802.11
             Some versions of the Windows netgear wireless drivers do not
             properly handle over-sized beacon frames, leading to system
             compromise and code execution.  This vulnerability is exploited
             by the Metasploit framework.
 
-        NETSTUMBLER         Fingerprint         Deprecated
+        NETSTUMBLER         Fingerprint         802.11      Deprecated
             Older versions of Netstumbler (3.22, 3.23, 3.30) generate, in
             certain conditions, specific packets.
 
-        NULLPROBERESP       Fingerprint
+        NULLPROBERESP       Fingerprint         802.11
             Probe-response packets with a SSID IE tag component of length 0
             can cause older cards (prism2, orinoco, airport-classic) to
             fail.
@@ -1027,11 +1068,15 @@ http://www.kismetwireless.net
             References:
                 WVE-2005-0019
 
-        PROBENOJOIN         Trend/Stateful
-            Active scanning tools such as Netstumbler constantly send
-            network discovery probes but never join any of the networks
-            which respond.  This alert can cause excessive false positives
-            while channel hopping, and is disabled by default.
+        WPSBRUTE            Trend/Stateful      802.11
+            WPS is vulnerable to a brute-force attack which can reveal the
+            WPS key in a matter of hours.  An AP under attack will send an
+            unusual number of WPS responses.  This vulnerability is 
+            documented in the paper by Stefan Viehbock and implemented
+            in his tool and the Reaver attack tool.
+
+            References:
+                http://sviehb.files.wordpress.com/2011/12/viehboeck_wps.pdf
 
 13. Other Configuration
 
@@ -1600,6 +1645,21 @@ http://www.kismetwireless.net
        will cause a wlan0mon to be created).  Kismet will use this virtual
        interface for capture, so that it causes less disruption to the
        configuration of the existing interface.
+
+    Q: How do I prevent Kismet from looking at data frames?
+    A: Set 'hidedata' to 'true' in the Kismet config file.  This will cause
+       Kismet to trim data frames as soon as they are identified.
+       Statistics like retransmit rates, data size/bandwidth, and so on will
+       continue, but the data contents will never be examined, even for
+       non-logging purposes (such as DHCP/IP detection, etc).
+
+       NOTICE FOR L.E.O. : Kismet WILL STILL CAPTURE the data into RAM.
+       Because the length of the 802.11 (or other PHY type) headers is
+       unknown until the packet is captured in many cases, it is not
+       possible to set the packet capture length ahead of time to exclude
+       data.  While Kismet will not examine in any way or log in any way the
+       data captured while hidedata=true is set, it will technically exist
+       as a capture in RAM until the next packet overwrites the buffer.
 
     Q: What happens when I ask a question already here?
     A: I'll probably be rude to you (or someone else will).  But that would

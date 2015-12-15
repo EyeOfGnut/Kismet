@@ -375,12 +375,13 @@ public:
 	virtual void SetMenuVis(int in_menu, int in_vis);
 
 	// Add an item to a menu ID
-	virtual int AddMenuItem(string in_text, int menuid, char extra);
+	virtual int AddMenuItem(string in_text, int menuid, char extra, int after = -1);
 	// Add a submenu item to a menu ID, returns a menu we can add things
 	// to for them to show up in the submenu
 	virtual int AddSubMenuItem(string in_text, int menuid, char extra);
 	// Set an item checkable
 	virtual void SetMenuItemChecked(int in_item, int in_checked);
+	virtual int GetMenuItemChecked(int in_item);
 	// We can't delete, again, but we can hide
 	virtual void SetMenuItemVis(int in_item, int in_vis);
 
@@ -519,6 +520,8 @@ public:
 		return text_vec;
 	}
 	virtual void AppendText(string in_text);
+	virtual void AppendText(vector<string> in_text);
+
 	virtual void SetMaxText(int in_max) { max_text = in_max; }
 
 	// Follow the end of the text unless we're scrolled differently
@@ -975,6 +978,10 @@ protected:
 
 #endif
 
+// Callbacks for a panel exiting, if any
+#define KISPANEL_COMPLETECB_PARMS int rc, void *auxptr, GlobalRegistry *globalreg
+typedef void (*KispanelCompleteRx)(KISPANEL_COMPLETECB_PARMS);
+
 class Kis_Panel {
 public:
 	Kis_Panel() {
@@ -1031,6 +1038,10 @@ public:
 
 	void SetActiveComponent(Kis_Panel_Component *in_comp);
 
+	void SetCompleteCallback(KispanelCompleteRx in_callback, void *in_aux);
+
+	void KillPanel();
+
 protected:
 	// Bit values of what components expect to happen
 	// COMP_DRAW - issue a draw command to this component during panel draw
@@ -1085,6 +1096,11 @@ protected:
 	struct timeval last_key_time;
 
 	int escape_timer;
+
+	// Return value and callback, if any
+	int rc;
+	KispanelCompleteRx rcallback;
+	void *raux;
 };
 
 // Pollable supersystem for handling panels and input

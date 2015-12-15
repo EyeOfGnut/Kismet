@@ -151,7 +151,12 @@ int Protocol_SOURCE(PROTO_PARMS) {
 				break;
 
 			case SOURCE_channel:
-				osstr << psrc->channel;
+				/*
+				if (psrc->strong_source != NULL)
+					osstr << psrc->strong_source->FetchHardwareChannel();
+				else
+				*/
+					osstr << psrc->channel;
 				cache->Cache(fnum, osstr.str());
 				break;
 
@@ -369,19 +374,19 @@ int pst_ipc_chanreport(IPC_CMD_PARMS) {
 }
 
 int pst_channeltimer(TIMEEVENT_PARMS) {
-	((Packetsourcetracker *) parm)->ChannelTimer();
+	((Packetsourcetracker *) auxptr)->ChannelTimer();
 
 	return 1;
 }
 
 int pst_opentimer(TIMEEVENT_PARMS) {
-	((Packetsourcetracker *) parm)->OpenTimer();
+	((Packetsourcetracker *) auxptr)->OpenTimer();
 
 	return 1;
 }
 
 int pst_sourceprototimer(TIMEEVENT_PARMS) {
-	((Packetsourcetracker *) parm)->BlitSources(-1);
+	((Packetsourcetracker *) auxptr)->BlitSources(-1);
 
 	return 1;
 }
@@ -452,20 +457,29 @@ Packetsourcetracker::Packetsourcetracker(GlobalRegistry *in_globalreg) {
 		exit(1);
 	}
 
+	globalreg->InsertGlobal("PACKETSOURCE_TRACKER", this);
+
 	// Register our packet components 
 	// back-refer to the capsource so we can get names and parameters
 	_PCM(PACK_COMP_KISCAPSRC) =
 		globalreg->packetchain->RegisterPacketComponent("KISCAPSRC");
-	// Basic packet chunks everyone needs - while it doesn't necessarily
-	// make sense to do this here, it makes as much sense as anywhere else
+
+	// Raw radio headers
 	_PCM(PACK_COMP_RADIODATA) =
 		globalreg->packetchain->RegisterPacketComponent("RADIODATA");
+
+	// Link data
 	_PCM(PACK_COMP_LINKFRAME) =
 		globalreg->packetchain->RegisterPacketComponent("LINKFRAME");
-	_PCM(PACK_COMP_80211FRAME) =
-		globalreg->packetchain->RegisterPacketComponent("80211FRAME");
-	_PCM(PACK_COMP_FCSBYTES) =
-		globalreg->packetchain->RegisterPacketComponent("FCSBYTES");
+
+	// Checksum data
+	_PCM(PACK_COMP_CHECKSUM) =
+		globalreg->packetchain->RegisterPacketComponent("CHECKSUM");
+
+	// Decapsulated link layer packet (stripped of optional radio headers, if
+	// applicable)
+	_PCM(PACK_COMP_DECAP) =
+		globalreg->packetchain->RegisterPacketComponent("DECAP");
 
 	globalreg->packetchain->RegisterHandler(&pst_chain_hook, this,
 											CHAINPOS_POSTCAP, -100);
@@ -524,6 +538,8 @@ Packetsourcetracker::Packetsourcetracker(GlobalRegistry *in_globalreg) {
 
 Packetsourcetracker::~Packetsourcetracker() {
 	StopSource(0);
+
+	globalreg->InsertGlobal("PACKETSOURCE_TRACKER", NULL);
 
 	globalreg->RemovePollableSubsys(this);
 
@@ -611,6 +627,7 @@ int Packetsourcetracker::Poll(fd_set& in_rset, fd_set& in_wset) {
 
 		if (capd >= 0 && FD_ISSET(capd, &in_rset)) {
 			if (x->second->strong_source->Poll() <= 0) {
+				// fprintf(stderr, "debug - pid %u zero poll %d\n", getpid(), x->second->zeropoll);
 				x->second->zeropoll++;
 			} else {
 				x->second->zeropoll = 0;
@@ -618,6 +635,7 @@ int Packetsourcetracker::Poll(fd_set& in_rset, fd_set& in_wset) {
 		}
 
 		if (x->second->zeropoll > 100) {
+			// fprintf(stderr, "debug pid %u zero poll fail %d\n", getpid(), x->second->zeropoll);
 			_MSG("Packet source '" + x->second->strong_source->FetchName() + 
 				 "' is no longer returning any data when polled, it has "
 				 "probably been disconnected, and will be closed.", MSGFLAG_ERROR);
@@ -1966,6 +1984,7 @@ void Packetsourcetracker::SendIPCSourceAdd(pst_packetsource *in_source) {
 	ipc_packet *ipc =
 		(ipc_packet *) malloc(sizeof(ipc_packet) +
 							  sizeof(ipc_source_add));
+	memset(ipc, 0, sizeof(ipc_packet) + sizeof(ipc_source_add));
 	ipc_source_add *add = (ipc_source_add *) ipc->data;
 
 	ipc->data_len = sizeof(ipc_source_add);
@@ -2004,6 +2023,7 @@ void Packetsourcetracker::SendIPCChannellist(pst_channellist *in_list) {
 	ipc_packet *ipc =
 		(ipc_packet *) malloc(sizeof(ipc_packet) +
 							  sizeof(ipc_source_add_chanlist));
+	memset(ipc, 0, sizeof(ipc_packet) + sizeof(ipc_source_add_chanlist));
 	ipc_source_add_chanlist *addch = (ipc_source_add_chanlist *) ipc->data;
 
 	ipc->data_len = sizeof(ipc_source_add_chanlist);
@@ -2078,7 +2098,14 @@ void Packetsourcetracker::SendIPCReport(pst_packetsource *in_source) {
 	report->hop_tm_sec = (uint32_t) in_source->tm_hop_time.tv_sec;
 	report->hop_tm_usec = (uint32_t) in_source->tm_hop_time.tv_usec;
 
-	report->last_channel = in_source->channel;
+	if (in_source->strong_source != NULL) {
+		// printf("debug - drone strong source\n");
+		report->last_channel = in_source->strong_source->FetchChannel();
+	} else {
+		// printf("debug - drone pst\n");
+		report->last_channel = in_source->channel;
+	}
+	// printf("debug - drone report channel %u\n", report->last_channel);
 
 	rootipc->SendIPC(ipc);
 }
@@ -2131,6 +2158,7 @@ void Packetsourcetracker::SendIPCStop(pst_packetsource *in_source) {
 	ipc_packet *ipc =
 		(ipc_packet *) malloc(sizeof(ipc_packet) +
 							  sizeof(ipc_source_run));
+	memset(ipc, 0, sizeof(ipc_packet) + sizeof(ipc_source_run));
 	ipc_source_run *run = (ipc_source_run *) ipc->data;
 
 	ipc->data_len = sizeof(ipc_source_run);

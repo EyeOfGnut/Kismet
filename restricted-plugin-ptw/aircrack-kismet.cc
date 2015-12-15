@@ -56,9 +56,9 @@
 #include <plugintracker.h>
 #include <globalregistry.h>
 #include <netracker.h>
-#include <packetdissectors.h>
 #include <alertracker.h>
 #include <version.h>
+#include <phy_80211.h>
 
 #include "aircrack-crypto.h"
 #include "aircrack-ptw2-lib.h"
@@ -97,6 +97,12 @@ struct kisptw_state {
 	map<mac_addr, kisptw_net *> netmap;
 	int timer_ref;
 	int alert_ref;
+
+	int dev_comp_dot11;
+	int pack_comp_80211, pack_comp_decap, pack_comp_device;
+
+	Kis_80211_Phy *phy80211;
+	Devicetracker *devicetracker;
 };
 
 kisptw_state *state = NULL;
@@ -160,7 +166,7 @@ void *kisptw_crack(void *arg) {
 }
 
 int kisptw_event_timer(TIMEEVENT_PARMS) {
-	kisptw_state *kst = (kisptw_state *) parm;
+	kisptw_state *kst = (kisptw_state *) auxptr;
 
 	for (map<mac_addr, kisptw_net *>::iterator x = kst->netmap.begin();
 		  x != kst->netmap.end(); ++x) {
@@ -241,9 +247,11 @@ int kisptw_event_timer(TIMEEVENT_PARMS) {
 											   x->second->bssid,
 											   0, al);
 
-			globalreg->builtindissector->AddWepKey(x->second->bssid,
-												   x->second->wepkey,
-												   x->second->len, 1);
+			Kis_80211_Phy *dot11phy = 
+				(Kis_80211_Phy *) globalreg->FetchGlobal("PHY_80211_TRACKER");
+
+			dot11phy->AddWepKey(x->second->bssid, x->second->wepkey,
+								x->second->len, 1);
 
 			_MSG("Cleaned up WEP data on " + x->second->bssid.Mac2String(), 
 				 MSGFLAG_INFO);
@@ -350,7 +358,7 @@ int kisptw_datachain_hook(CHAINCALL_PARMS) {
 	kisptw_net *pnet = NULL;
 
 	// Fetch the info from the packet chain data
-	kis_ieee80211_packinfo *packinfo = (kis_ieee80211_packinfo *) 
+	dot11_packinfo *packinfo = (dot11_packinfo *) 
 		in_pack->fetch(_PCM(PACK_COMP_80211));
 
 	// No 802.11 info, we don't handle it.
@@ -412,7 +420,8 @@ int kisptw_datachain_hook(CHAINCALL_PARMS) {
 	}
 
 	// Handle WEP + PTW
-	if (packinfo->cryptset == crypt_wep &&
+	// printf("debug - cryptset %lx modified %lx\n", packinfo->cryptset, packinfo->cryptset & crypt_protectmask);
+	if ((packinfo->cryptset & crypt_protectmask) == crypt_wep &&
 		chunk != NULL && packinfo->header_offset < chunk->length &&
 		chunk->length - packinfo->header_offset > 7) {
 
@@ -565,7 +574,35 @@ int kisptw_unregister(GlobalRegistry *in_globalreg) {
 int kisptw_register(GlobalRegistry *in_globalreg) {
 	globalreg = in_globalreg;
 
+	if (globalreg->kismet_instance != KISMET_INSTANCE_SERVER) {
+		_MSG("Not initializing PTW plugin, not running on a server",
+			 MSGFLAG_INFO);
+		return 1;
+	}
+
 	state = new kisptw_state;
+
+	state->phy80211 = 
+		(Kis_80211_Phy *) globalreg->FetchGlobal("PHY_80211");
+
+	if (state->phy80211 == NULL) {
+		_MSG("Missing PHY_80211 dot11 packet handler, something is wrong.  "
+			 "Trying to use this plugin on an older Kismet?",
+			 MSGFLAG_ERROR);
+		delete state;
+		return -1;
+	}
+
+	state->devicetracker = 
+		(Devicetracker *) globalreg->FetchGlobal("DEVICE_TRACKER");
+
+	if (state->devicetracker == NULL) {
+		_MSG("Missing phy-neutral devicetracker, something is wrong.  "
+			 "Trying to use this plugin on an older Kismet?",
+			 MSGFLAG_ERROR);
+		delete state;
+		return -1;
+	}
 
 	globalreg->packetchain->RegisterHandler(&kisptw_datachain_hook, state,
 											CHAINPOS_CLASSIFIER, 100);
@@ -576,7 +613,8 @@ int kisptw_register(GlobalRegistry *in_globalreg) {
 
 	state->alert_ref =
 		globalreg->alertracker->RegisterAlert("WEPCRACK", sat_minute, 20,
-											  sat_second, 5);
+											  sat_second, 5,
+											  state->phy80211->FetchPhyId());
 
 	return 1;
 }

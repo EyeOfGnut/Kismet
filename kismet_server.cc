@@ -43,6 +43,12 @@
 
 #include "plugintracker.h"
 
+#include "kis_dlt_ppi.h"
+#include "kis_dlt_radiotap.h"
+#include "kis_dlt_prism2.h"
+
+#include "kis_dissector_ipdata.h"
+
 #include "packetsource.h"
 
 #include "packetsource_bsdrt.h"
@@ -66,8 +72,6 @@
 #include "soundcontrol.h"
 
 #include "gpswrapper.h"
-
-#include "packetdissectors.h"
 
 #include "netracker.h"
 #include "devicetracker.h"
@@ -527,9 +531,6 @@ void CatchShutdown(int sig) {
 
 	globalregistry->pcapdump = NULL;
 
-	if (globalregistry->plugintracker != NULL)
-		globalregistry->plugintracker->ShutdownPlugins();
-    
 	if (globalregistry->netracker != NULL) {
 		delete globalregistry->netracker;
 		globalregistry->netracker = NULL;
@@ -539,6 +540,9 @@ void CatchShutdown(int sig) {
 		delete globalregistry->devicetracker;
 		globalregistry->devicetracker = NULL;
 	}
+
+	if (globalregistry->plugintracker != NULL)
+		globalregistry->plugintracker->ShutdownPlugins();
 
     // Dump fatal errors again
     if (fqmescli != NULL) //  && globalregistry->fatal_condition) 
@@ -603,6 +607,8 @@ int Usage(char *argv) {
 		   "     --no-root				  Do not start the kismet_capture binary \n"
 		   "                               when not running as root.  For no-priv \n"
 		   "                               remote capture ONLY.\n"
+		   "     --homedir <path>         Use an alternate path as the home \n"
+		   "                               directory instead of the user entry\n"
 		   );
 
 	printf("\n");
@@ -710,6 +716,7 @@ int main(int argc, char *argv[], char *envp[]) {
 	const int dwc = globalregistry->getopt_long_num++;
 	const int npwc = globalregistry->getopt_long_num++;
 	const int nrwc = globalregistry->getopt_long_num++;
+	const int hdwc = globalregistry->getopt_long_num++;
 
 	// Standard getopt parse run
 	static struct option main_longopt[] = {
@@ -721,6 +728,7 @@ int main(int argc, char *argv[], char *envp[]) {
 		{ "daemonize", no_argument, 0, dwc },
 		{ "no-plugins", no_argument, 0, npwc },
 		{ "no-root", no_argument, 0, nrwc },
+		{ "homedir", required_argument, 0, hdwc },
 		{ 0, 0, 0, 0 }
 	};
 
@@ -753,6 +761,8 @@ int main(int argc, char *argv[], char *envp[]) {
 			plugins = 0;
 		} else if (r == nrwc) {
 			startroot = 0;
+		} else if (r == hdwc) {
+			globalregistry->homepath = string(optarg);
 		}
 	}
 
@@ -912,6 +922,11 @@ int main(int argc, char *argv[], char *envp[]) {
 		globalregistry->servername = MungeToPrintable(conf->FetchOpt("servername"));
 	}
 
+	// Create the packet chain
+	globalregistry->packetchain = new Packetchain(globalregistry);
+	if (globalregistry->fatal_condition)
+		CatchShutdown(-1);
+
 	// Create the basic network/protocol server
 	globalregistry->kisnetserver = new KisNetFramework(globalregistry);
 	if (globalregistry->fatal_condition)
@@ -920,20 +935,6 @@ int main(int argc, char *argv[], char *envp[]) {
 	globalregistry->kisnetserver->RegisterClientCommand("SHUTDOWN",
 														&cmd_SHUTDOWN,
 														NULL);
-
-	// Start the plugin handler
-	if (plugins) {
-		globalregistry->plugintracker = new Plugintracker(globalregistry);
-	} else {
-		globalregistry->messagebus->InjectMessage(
-			"Plugins disabled on the command line, plugins will NOT be loaded...",
-			MSGFLAG_INFO);
-	}
-
-	// Create the packet chain
-	globalregistry->packetchain = new Packetchain(globalregistry);
-	if (globalregistry->fatal_condition)
-		CatchShutdown(-1);
 
 	// Create the packetsourcetracker
 	globalregistry->sourcetracker = new Packetsourcetracker(globalregistry);
@@ -946,7 +947,7 @@ int main(int argc, char *argv[], char *envp[]) {
 
 	}
 
-#ifndef SYS_CYGWIN
+#if !defined(SYS_CYGWIN) && !defined(SYS_ANDROID)
 	// Prep the tuntap device
 	Dumpfile_Tuntap *dtun = new Dumpfile_Tuntap(globalregistry);
 	if (globalregistry->fatal_condition)
@@ -1013,7 +1014,7 @@ int main(int argc, char *argv[], char *envp[]) {
 #endif
 	}
 
-#ifndef SYS_CYGWIN
+#if !defined(SYS_CYGWIN) && !defined(SYS_ANDROID)
 	// Fire the tuntap device setup now that we've sync'd the IPC system
 	dtun->OpenTuntap();
 #endif
@@ -1021,6 +1022,7 @@ int main(int argc, char *argv[], char *envp[]) {
 	// Fire the startup command to IPC, we're done and it can drop privs
 	if (globalregistry->rootipc != NULL) {
 		ipc_packet *ipc = (ipc_packet *) malloc(sizeof(ipc_packet));
+		memset(ipc, 0, sizeof(ipc_packet));
 		ipc->data_len = 0;
 		ipc->ipc_ack = 0;
 		ipc->ipc_cmdnum = startup_ipc_id;
@@ -1043,6 +1045,13 @@ int main(int argc, char *argv[], char *envp[]) {
 	globalregistry->devicetracker = new Devicetracker(globalregistry);
 	if (globalregistry->fatal_condition)
 		CatchShutdown(-1);
+
+	// Register the DLT handlers
+	new Kis_DLT_PPI(globalregistry);
+	new Kis_DLT_Radiotap(globalregistry);
+	new Kis_DLT_Prism2(globalregistry);
+
+	new Kis_Dissector_IPdata(globalregistry);
 
 	// Register the base PHYs
 	if (globalregistry->devicetracker->RegisterPhyHandler(new Kis_80211_Phy(globalregistry)) < 0 || globalregistry->fatal_condition) 
@@ -1094,6 +1103,16 @@ int main(int argc, char *argv[], char *envp[]) {
 		CatchShutdown(-1);
 #endif
 
+	// Start the plugin handler
+	if (plugins) {
+		globalregistry->plugintracker = new Plugintracker(globalregistry);
+	} else {
+		globalregistry->messagebus->InjectMessage(
+			"Plugins disabled on the command line, plugins will NOT be loaded...",
+			MSGFLAG_INFO);
+	}
+
+
 	// Process userspace plugins
 	if (globalregistry->plugintracker != NULL) {
 		globalregistry->plugintracker->ScanUserPlugins();
@@ -1119,6 +1138,7 @@ int main(int argc, char *argv[], char *envp[]) {
 	if (globalregistry->fatal_condition)
 		CatchShutdown(-1);
 
+#if 0
 	// Register basic chain elements...  This is just instantiating a util class.
 	// Nothing else talks to it, so we don't have to care about following it
 	globalregistry->messagebus->InjectMessage("Inserting basic packet dissectors...",
@@ -1126,6 +1146,7 @@ int main(int argc, char *argv[], char *envp[]) {
 	globalregistry->builtindissector = new KisBuiltinDissector(globalregistry);
 	if (globalregistry->fatal_condition)
 		CatchShutdown(-1);
+#endif
 
 	// Assign the speech and sound handlers
 	globalregistry->soundctl = new SoundControl(globalregistry);
@@ -1146,11 +1167,16 @@ int main(int argc, char *argv[], char *envp[]) {
 		CatchShutdown(-1);
 
 	// Create the network tracker
-	globalregistry->messagebus->InjectMessage("Creating network tracker...",
-											  MSGFLAG_INFO);
-	globalregistry->netracker = new Netracker(globalregistry);
-	if (globalregistry->fatal_condition)
-		CatchShutdown(-1);
+	if (conf->FetchOptBoolean("disablenettracker", 0) == 0) {
+		globalregistry->messagebus->InjectMessage("Creating network tracker...",
+												  MSGFLAG_INFO);
+		globalregistry->netracker = new Netracker(globalregistry);
+		if (globalregistry->fatal_condition)
+			CatchShutdown(-1);
+	} else {
+		_MSG("Disabling deprecated nettracker core; this will disable some "
+			 "protocols and log files.", MSGFLAG_INFO);
+	}
 
 	// Create the channel tracker
 	globalregistry->messagebus->InjectMessage("Creating channel tracker...",
@@ -1225,10 +1251,15 @@ int main(int argc, char *argv[], char *envp[]) {
 	crc32_init_table_80211(globalregistry->crc32_table);
 
 	/* Register the info protocol */
-	_NPM(PROTO_REF_INFO) =
-		globalregistry->kisnetserver->RegisterProtocol("INFO", 0, 1,
-												  INFO_fields_text, 
-												  &Protocol_INFO, NULL, NULL);
+	if (globalreg->netracker != NULL) {
+		_NPM(PROTO_REF_INFO) =
+			globalregistry->kisnetserver->RegisterProtocol("INFO", 0, 1,
+														   INFO_fields_text, 
+														   &Protocol_INFO, NULL, NULL);
+	} else {
+		_MSG("Old nettracker core disabled, disabling deprecated *INFO sentence",
+			 MSGFLAG_INFO);
+	}
 
 	battery_proto_ref =
 		globalregistry->kisnetserver->RegisterProtocol("BATTERY", 0, 1,
@@ -1302,3 +1333,5 @@ int main(int argc, char *argv[], char *envp[]) {
 
 	CatchShutdown(-1);
 }
+
+// vim: ts=4:sw=4

@@ -16,34 +16,27 @@
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
-#ifndef __DUMPFILE_BTSCANTXT_H__
-#define __DUMPFILE_BTSCANTXT_H__
+/* DLT handler framework */
+
+#ifndef __KIS_DLT_PPI_H__
+#define __KIS_DLT_PPI_H__
 
 #include "config.h"
 
-#include <stdio.h>
-#include <string>
-
 #include "globalregistry.h"
-#include "configfile.h"
-#include "messagebus.h"
-#include "dumpfile.h"
-#include "tracker_btscan.h"
+#include "packet.h"
+#include "packetchain.h"
+#include "kis_dlt.h"
 
-// Net txt bulk logger
-class Dumpfile_Btscantxt : public Dumpfile {
+class Kis_DLT_PPI : public Kis_DLT_Handler {
 public:
-	Dumpfile_Btscantxt();
-	Dumpfile_Btscantxt(GlobalRegistry *in_globalreg);
-	virtual ~Dumpfile_Btscantxt();
+	Kis_DLT_PPI() { fprintf(stderr, "FATAL OOPS: Kis_DLT_PPI()\n"); exit(1); }
+	Kis_DLT_PPI(GlobalRegistry *in_globalreg);
 
-	void SetTracker(Tracker_BTScan *in_tracker) { tracker = in_tracker; }
+	virtual int HandlePacket(kis_packet *in_pack);
 
-	virtual int Flush();
-protected:
-	FILE *txtfile;
-
-	Tracker_BTScan *tracker;
+	~Kis_DLT_PPI();
 };
 
-#endif /* __dump... */
+#endif
+

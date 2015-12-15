@@ -19,9 +19,15 @@
 #ifndef __KISVERSION_H__
 #define __KISVERSION_H__
 
+<<<<<<< HEAD
 #define VERSION_MAJOR	"2014"
 #define VERSION_MINOR	"02"
 #define VERSION_TINY	"R1"
+=======
+#define VERSION_MAJOR	"2012"
+#define VERSION_MINOR	"GIT"
+#define VERSION_TINY	"R0"
+>>>>>>> upstream/master
 
 #define REVISION		"$Rev$"
 #define REVDATE			"$LastChangedDate$"

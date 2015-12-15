@@ -67,10 +67,13 @@ void Dumpfile::Usage(char *name) {
 		   " -n, --no-logging             Disable logging entirely\n");
 }
 
-string Dumpfile::ProcessConfigOpt(string in_type) {
+string Dumpfile::ProcessConfigOpt() {
 	string logtypes, logtemplate, logname;
 	int option_idx = 0;
 	string retfname;
+
+	if (logclass == "")
+		logclass = type;
 
 	// longopts for the packetsourcetracker component
 	static struct option logfile_long_options[] = {
@@ -113,11 +116,15 @@ string Dumpfile::ProcessConfigOpt(string in_type) {
 
 	if (logname.length() == 0 &&
 		(logname = globalreg->kismet_config->FetchOpt("logdefault")) == "") {
-		_MSG("No 'logdefault' specified on the command line or config file",
-			 MSGFLAG_FATAL);
-		globalreg->fatal_condition = 1;
-		return "";
+		if ((logname = globalreg->kismet_config->FetchOpt("logname")) == "") {
+			_MSG("No 'logdefault' specified on the command line or config file",
+				 MSGFLAG_FATAL);
+			globalreg->fatal_condition = 1;
+			return "";
+		}
 	}
+
+	globalreg->logname = logname;
 
 	if (logtypes.length() == 0 &&
 		(logtypes = globalreg->kismet_config->FetchOpt("logtypes")) == "") {
@@ -128,11 +135,12 @@ string Dumpfile::ProcessConfigOpt(string in_type) {
 	}
 
 	vector<string> typevec = StrTokenize(StrLower(logtypes), ",");
-	in_type = StrLower(in_type); // lower local copy
+	logclass = StrLower(logclass);
+	string ltype = StrLower(type);
 
 	int factive = 0;
 	for (unsigned int x = 0; x < typevec.size(); x++) {
-		if (typevec[x] == in_type) {
+		if (typevec[x] == logclass || typevec[x] == ltype ) {
 			factive = 1;
 			break;
 		}
@@ -145,7 +153,7 @@ string Dumpfile::ProcessConfigOpt(string in_type) {
 	// _MSG("Log file type '" + in_type + "' activated.", MSGFLAG_INFO);
 
 	retfname = 
-		globalreg->kismet_config->ExpandLogPath(logtemplate, logname, in_type, 0, 0);
+		globalreg->kismet_config->ExpandLogPath(logtemplate, logname, type, 0, 0);
 
 	return retfname;
 }

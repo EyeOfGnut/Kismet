@@ -11,7 +11,7 @@ CAPSOURCES = \
 	packetsource_darwin.o packetsource_macusb.o
 
 PSO	= util.o cygwin_utils.o globalregistry.o ringbuf.o \
-	messagebus.o configfile.o getopt.o \
+	packet.o messagebus.o configfile.o getopt.o \
 	filtercore.o ifcontrol.o iwcontrol.o madwifing_control.o nl80211_control.o \
 	$(OBJC_LINK) \
 	psutils.o ipc_remote.o soundcontrol.o battery.o kismet_json.o \
@@ -21,18 +21,21 @@ PSO	= util.o cygwin_utils.o globalregistry.o ringbuf.o \
 	gpswrapper.o gpscore.o gpsdclient.o gpsserial.o gpsfixed.o \
 	packetchain.o \
 	plugintracker.o alertracker.o timetracker.o \
-	packetdissectors.o devicetracker.o netracker.o channeltracker.o \
-	phy_80211.o \
+	devicetracker.o netracker.o channeltracker.o \
+	kis_dlt.o kis_dlt_ppi.o kis_dlt_radiotap.o kis_dlt_prism2.o \
+	phy_80211.o phy_80211_dissectors.o \
+	kis_dissector_ipdata.o \
 	manuf.o \
 	dumpfile.o dumpfile_pcap.o dumpfile_gpsxml.o \
 	dumpfile_tuntap.o dumpfile_netxml.o dumpfile_nettxt.o dumpfile_string.o \
-	dumpfile_alert.o statealert.o \
+	dumpfile_alert.o dumpfile_devicetracker.o \
+	statealert.o \
 	kismet_server.o
 
 PS	= kismet_server
 
 DRONEO = util.o cygwin_utils.o globalregistry.o ringbuf.o \
-		 messagebus.o configfile.o getopt.o \
+		 packet.o messagebus.o configfile.o getopt.o \
 		 ifcontrol.o iwcontrol.o madwifing_control.o nl80211_control.o $(OBJC_LINK) \
 		 psutils.o ipc_remote.o soundcontrol.o kismet_json.o \
 		 netframework.o clinetframework.o tcpserver.o tcpclient.o serialclient.o \
@@ -40,11 +43,12 @@ DRONEO = util.o cygwin_utils.o globalregistry.o ringbuf.o \
 		 gpswrapper.o gpscore.o gpsdclient.o gpsserial.o gpsfixed.o \
 		 packetchain.o \
 		 $(CAPSOURCES) \
-		 plugintracker.o packetsourcetracker.o timetracker.o \
+		 plugintracker.o packetsourcetracker.o timetracker.o devicetracker_drone.o \
+		 dumpfile_drone.o \
 		 kismet_drone.o
 
 CSO = util.o cygwin_utils.o globalregistry.o ringbuf.o \
-	messagebus.o configfile.o getopt.o \
+	packet.o messagebus.o configfile.o getopt.o \
 	filtercore.o ifcontrol.o iwcontrol.o madwifing_control.o nl80211_control.o \
 	$(OBJC_LINK) \
 	psutils.o ipc_remote.o netframework.o clinetframework.o tcpserver.o tcpclient.o \
@@ -60,10 +64,11 @@ NCO	= util.o ringbuf.o globalregistry.o messagebus.o configfile.o getopt.o \
 	  soundcontrol.o timetracker.o ipc_remote.o \
 	  clinetframework.o tcpclient.o popenclient.o kis_clinetframe.o \
 	  text_cliframe.o \
-	  kis_panel_widgets.o kis_panel_network.o \
-	  kis_panel_windows.o kis_panel_details.o \
-	  kis_panel_preferences.o \
+	  kis_panel_widgets.o kis_panel_windows.o kis_panel_details.o \
+	  kis_panel_info.o kis_panel_preferences.o \
 	  kis_panel_frontend.o \
+	  kis_client_devicetracker.o kis_client_phy80211.o \
+	  kis_panel_device.o \
 	  kismet_client.o
 NC	= kismet_client
 
@@ -104,10 +109,10 @@ $(NC):	$(NCO)
 Makefile: Makefile.in configure
 	@-echo "'Makefile.in' or 'configure' are more current than this Makefile.  You should re-run 'configure'."
 
-binsuidinstall:
+binsuidinstall: $(CS)
 	$(INSTALL) -o $(INSTUSR) -g $(SUIDGROUP) -m 4550 $(CS) $(BIN)/$(CS); 
 	
-commoninstall:
+commoninstall: $(INSTBINS)
 	mkdir -p $(ETC)
 	mkdir -p $(BIN)
 

@@ -20,7 +20,11 @@
 
 require 'socket'
 require 'time'
+<<<<<<< HEAD
 require 'kismet'
+=======
+require_relative 'kismet'
+>>>>>>> upstream/master
 require 'pp'
 require "getopt/long"
 require 'syslog'

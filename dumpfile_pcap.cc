@@ -25,6 +25,7 @@
 #include "endian_magic.h"
 #include "dumpfile_pcap.h"
 #include "packetsource_pcap.h"
+#include "phy_80211.h"
 
 int dumpfilepcap_chain_hook(CHAINCALL_PARMS) {
 	Dumpfile_Pcap *auxptr = (Dumpfile_Pcap *) auxdata;
@@ -41,6 +42,7 @@ Dumpfile_Pcap::Dumpfile_Pcap(GlobalRegistry *in_globalreg) : Dumpfile(in_globalr
 
 	parent = NULL;
 	type = "pcapdump";
+	logclass = "pcap";
 
 	// Default to dot11
 	dlt = DLT_IEEE802_11;
@@ -58,6 +60,7 @@ Dumpfile_Pcap::Dumpfile_Pcap(GlobalRegistry *in_globalreg, string in_type,
 
 	globalreg = in_globalreg;
 	type = in_type;
+	logclass = "pcap";
 	parent = in_parent;
 
 	cbfilter = in_filter;
@@ -100,7 +103,8 @@ void Dumpfile_Pcap::Startup_Dumpfile() {
 	}
 
 	// Find the file name
-	if ((fname = ProcessConfigOpt(type)) == "" || globalreg->fatal_condition) {
+	if ((fname = ProcessConfigOpt()) == "" ||
+		globalreg->fatal_condition) {
 		return;
 	}
 
@@ -185,8 +189,8 @@ void Dumpfile_Pcap::RemovePPICallback(dumpfile_ppi_cb in_cb, void *in_aux) {
 int Dumpfile_Pcap::chain_handler(kis_packet *in_pack) {
 	// Grab the mangled frame if we have it, then try to grab up the list of
 	// data types and die if we can't get anything
-	kis_ieee80211_packinfo *packinfo =
-		(kis_ieee80211_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211));
+	dot11_packinfo *packinfo =
+		(dot11_packinfo *) in_pack->fetch(_PCM(PACK_COMP_80211));
 
 	// Grab the generic mangled frame
 	kis_datachunk *chunk = 
@@ -198,8 +202,8 @@ int Dumpfile_Pcap::chain_handler(kis_packet *in_pack) {
 	kis_gps_packinfo *gpsdata =
 		(kis_gps_packinfo *) in_pack->fetch(_PCM(PACK_COMP_GPS));
 
-	kis_fcs_bytes *fcsdata =
-		(kis_fcs_bytes *) in_pack->fetch(_PCM(PACK_COMP_FCSBYTES));
+	kis_packet_checksum *fcsdata =
+		(kis_packet_checksum *) in_pack->fetch(_PCM(PACK_COMP_CHECKSUM));
 
 	if (cbfilter != NULL) {
 		// If we have a filter, grab the data using that
@@ -207,7 +211,7 @@ int Dumpfile_Pcap::chain_handler(kis_packet *in_pack) {
 	} else if (chunk == NULL) {
 		// Look for the 802.11 frame
 		if ((chunk = 
-			 (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_80211FRAME))) == NULL) {
+			 (kis_datachunk *) in_pack->fetch(_PCM(PACK_COMP_DECAP))) == NULL) {
 
 			// Look for any link frame, we'll check the DLT soon
 			chunk = 
@@ -414,7 +418,7 @@ int Dumpfile_Pcap::chain_handler(kis_packet *in_pack) {
 			if (fcsdata != NULL) {
 				ppi_common->flags |= PPI_80211_FLAG_FCS;
 
-				if (fcsdata->fcsvalid == 0)
+				if (fcsdata->checksum_valid == 0)
 					ppi_common->flags |= PPI_80211_FLAG_INVALFCS;
 			}
 
@@ -507,7 +511,7 @@ int Dumpfile_Pcap::chain_handler(kis_packet *in_pack) {
 	if (dumpformat == dump_ppi && fcsdata != NULL && 
 		chunk != NULL && radioinfo != NULL) {
 
-		memcpy(&(dump_data[dump_offset]), fcsdata->fcs, 4);
+		memcpy(&(dump_data[dump_offset]), fcsdata->data, 4);
 		dump_offset += 4;
 	}
 
